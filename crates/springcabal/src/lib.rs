@@ -8,17 +8,12 @@
 
 extern crate alloc;
 
+// Engine calls only work on wasm32 (on the host they panic), so the host
+// unit tests cover the logic around them.
+pub mod check;
 pub mod keys;
 pub mod local;
-pub mod message;
-
-// These call into the engine, whose functions exist only on wasm32. The
-// modules above are plain logic and are unit-tested on the host.
-#[cfg(target_arch = "wasm32")]
-pub mod check;
-#[cfg(target_arch = "wasm32")]
 pub mod menu;
-#[cfg(target_arch = "wasm32")]
+pub mod message;
 pub mod music;
-#[cfg(target_arch = "wasm32")]
 pub mod shots;
