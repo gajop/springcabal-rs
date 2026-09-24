@@ -218,8 +218,8 @@ impl MoveGoal {
 /// The map in elmos, `clearance` from each edge.
 #[cfg(target_arch = "wasm32")]
 fn map_rect(clearance: f32) -> Option<Rect> {
+    use spring::consts::SQUARE_SIZE_F as SQUARE_SIZE;
     // Heightmap points: one more than the map's squares.
-    const SQUARE_SIZE: f32 = 8.0;
     let [points_x, points_z] = spring::get_height_map_size().ok()?;
     Some(Rect {
         min_x: clearance,

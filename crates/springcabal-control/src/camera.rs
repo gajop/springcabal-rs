@@ -170,7 +170,8 @@ pub enum FocusY {
 ///     .aim(Aim::ViewMidPosition)
 ///     .lead(12.0)
 ///     .smoothing(Smoothing::AverageMove { updates: 12 });
-/// handler.add(Box::new(CameraFollowWidget::new(FOLLOW, |global: &Global| global.player())));
+/// let camera = CameraFollow::new(FOLLOW); // in a widget; each update:
+/// camera.update(global.player(), dt);
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Follow {
@@ -435,7 +436,7 @@ mod engine {
     }
 
     /// A camera that follows a unit. Embed it in a widget and call
-    /// [`update`](Self::update) every update, or use [`CameraFollowWidget`].
+    /// [`update`](Self::update) every update.
     pub struct CameraFollow {
         config: Follow,
         state: RefCell<State>,
@@ -457,11 +458,15 @@ mod engine {
         pub fn update(&self, unit: Option<i32>, dt: f32) {
             let config = &self.config;
             if let Some((view, position)) = config.start {
-                let state = &mut *self.state.borrow_mut();
                 // Following takes over from the start camera, so stop
-                // retrying it then.
-                if !state.placed && state.followed.is_none() {
-                    state.placed = place_camera(&view, position);
+                // retrying it then. No borrow is held while the engine
+                // moves the camera.
+                let pending = {
+                    let state = self.state.borrow();
+                    !state.placed && state.followed.is_none()
+                };
+                if pending && place_camera(&view, position) {
+                    self.state.borrow_mut().placed = true;
                 }
             }
             let Some(unit) = unit else {
@@ -473,8 +478,9 @@ mod engine {
             let Some(point) = self.point(unit) else {
                 return;
             };
-            if config.engine_tracker && self.state.borrow().tracked != Some(unit) {
-                arm_tracker(unit);
+            // Retried every update until the engine takes it.
+            let untracked = self.state.borrow().tracked != Some(unit);
+            if config.engine_tracker && untracked && arm_tracker(unit) {
                 self.state.borrow_mut().tracked = Some(unit);
             }
 
@@ -554,38 +560,12 @@ mod engine {
         }
     }
 
-    /// Arm the engine's camera tracker on `unit`, leaving the selection alone.
-    fn arm_tracker(unit: i32) {
-        spring::track_unit(unit).log_err_once("camera: track_unit");
-    }
-
-    /// A widget with a [`CameraFollow`] on the unit `target` names.
-    pub struct CameraFollowWidget<G> {
-        camera: CameraFollow,
-        target: fn(&G) -> Option<i32>,
-    }
-
-    impl<G> CameraFollowWidget<G> {
-        pub fn new(config: Follow, target: fn(&G) -> Option<i32>) -> Self {
-            Self {
-                camera: CameraFollow::new(config),
-                target,
-            }
-        }
-    }
-
-    impl<G> Widget<G> for CameraFollowWidget<G> {
-        fn name(&self) -> &'static str {
-            "CameraFollow"
-        }
-
-        fn update(&self, ctx: &AddonContext<'_, G>, dt: f32) {
-            self.camera.update((self.target)(ctx.global()), dt);
-        }
-
-        fn mouse_wheel(&self, _ctx: &AddonContext<'_, G>, _up: bool, _value: f32) -> EventResult {
-            self.camera.config.block_zoom.into()
-        }
+    /// Arm the engine's camera tracker on `unit`, leaving the selection
+    /// alone. Returns whether the engine took it.
+    fn arm_tracker(unit: i32) -> bool {
+        spring::track_unit(unit)
+            .log_err_once("camera: track_unit")
+            .is_some_and(|ok| ok)
     }
 }
 
