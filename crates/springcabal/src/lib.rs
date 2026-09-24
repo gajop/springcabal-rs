@@ -11,6 +11,8 @@ extern crate alloc;
 // Engine calls only work on wasm32 (on the host they panic), so the host
 // unit tests cover the logic around them.
 pub mod check;
+pub mod defs;
+pub mod gallery;
 pub mod keys;
 pub mod local;
 pub mod menu;
