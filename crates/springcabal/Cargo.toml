@@ -1,0 +1,13 @@
+[package]
+name = "springcabal"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Shared building blocks for SpringCabal's Rust/WASM Ludum Dare games"
+
+[dependencies]
+spring = { workspace = true }
+spring-addons = { workspace = true }
+
+[lints]
+workspace = true
