@@ -215,7 +215,8 @@ impl Follow {
     }
 
     /// Place the camera with `view` at `position` first, before there is a
-    /// unit to follow. Retried until the engine accepts it.
+    /// unit to follow. Retried until the engine accepts it or following
+    /// starts.
     pub const fn start(mut self, view: View, position: Float3) -> Self {
         self.start = Some((view, position));
         self
@@ -455,11 +456,13 @@ mod engine {
         /// Follow `unit` (or nobody) for an update `dt` seconds long.
         pub fn update(&self, unit: Option<i32>, dt: f32) {
             let config = &self.config;
-            if let Some((view, position)) = config.start
-                && !self.state.borrow().placed
-            {
-                let placed = place_camera(&view, position);
-                self.state.borrow_mut().placed = placed;
+            if let Some((view, position)) = config.start {
+                let state = &mut *self.state.borrow_mut();
+                // Following takes over from the start camera, so stop
+                // retrying it then.
+                if !state.placed && state.followed.is_none() {
+                    state.placed = place_camera(&view, position);
+                }
             }
             let Some(unit) = unit else {
                 let mut state = self.state.borrow_mut();
