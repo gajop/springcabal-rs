@@ -57,7 +57,7 @@ impl<'a> Iterator for Fields<'a> {
     }
 }
 
-impl Fields<'_> {
+impl<'a> Fields<'a> {
     /// A finite float.
     pub fn f32(&mut self) -> Option<f32> {
         self.next()?
@@ -86,6 +86,12 @@ impl Fields<'_> {
         Some((self.f32()?, self.f32()?, self.f32()?))
     }
 
+    /// Everything not consumed yet, `|` included, as one field: for a free
+    /// text last field such as a story line.
+    pub fn rest(&mut self) -> Option<&'a str> {
+        self.rest.take()
+    }
+
     /// True when every field has been consumed.
     pub fn is_done(&self) -> bool {
         self.rest.is_none()
@@ -110,6 +116,11 @@ impl Encoder {
     pub fn kv(mut self, key: &str, value: impl Display) -> Self {
         let _ = write!(self.0, "|{key}={value}");
         self
+    }
+
+    /// Append each value as a positional field.
+    pub fn fields<T: Display>(self, values: impl IntoIterator<Item = T>) -> Self {
+        values.into_iter().fold(self, Self::field)
     }
 
     /// Append `1` or `0`.
@@ -205,6 +216,15 @@ mod tests {
     fn key_values_skip_bare_fields() {
         let pairs: alloc::vec::Vec<_> = key_values("S|a=1|junk|b=x=y", "S").unwrap().collect();
         assert_eq!(pairs, [("a", "1"), ("b", "x=y")]);
+    }
+
+    #[test]
+    fn rest_keeps_separators() {
+        let mut f = fields("S|1|free|text", "S").unwrap();
+        assert_eq!(f.i32(), Some(1));
+        assert_eq!(f.rest(), Some("free|text"));
+        assert!(f.is_done());
+        assert_eq!(Encoder::new("L").fields([1, 2]).finish(), "L|1|2");
     }
 
     #[test]

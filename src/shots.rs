@@ -29,6 +29,8 @@ pub struct Screenshots {
     clock: Clock,
     at: Vec<u32>,
     done_marker: Option<&'static str>,
+    quit_after: Option<u32>,
+    quit_at: Cell<Option<u32>>,
     updates: Cell<u32>,
     taken: Cell<usize>,
 }
@@ -41,6 +43,8 @@ impl Screenshots {
             clock,
             at: at.to_vec(),
             done_marker: None,
+            quit_after: None,
+            quit_at: Cell::new(None),
             updates: Cell::new(0),
             taken: Cell::new(0),
         }
@@ -52,13 +56,23 @@ impl Screenshots {
         self
     }
 
+    /// Quit the engine this many clock ticks after the last screenshot, for
+    /// suites that don't quit on the done marker themselves.
+    pub fn quit_after(mut self, ticks: u32) -> Self {
+        self.quit_after = Some(ticks);
+        self
+    }
+
     pub fn is_done(&self) -> bool {
         self.taken.get() >= self.at.len()
     }
 
     fn now(&self) -> Option<u32> {
         match self.clock {
-            Clock::GameFrame => spring::game::frame().ok(),
+            // Before the game starts the engine reports frame -1 (`u32::MAX`).
+            Clock::GameFrame => spring::game::frame()
+                .ok()
+                .filter(|frame| i32::try_from(*frame).is_ok()),
             Clock::Update => {
                 let updates = self.updates.get();
                 self.updates.set(updates + 1);
@@ -69,6 +83,13 @@ impl Screenshots {
 
     fn tick(&self) {
         let Some(now) = self.now() else { return };
+        if self.quit_at.get().is_some_and(|at| now >= at) {
+            self.quit_at.set(None);
+            if let Err(error) = spring::system_control::quit(0) {
+                spring::log_warning!("springcabal", "quit after screenshots failed: {error:?}");
+            }
+            return;
+        }
         let index = self.taken.get();
         let Some(&due) = self.at.get(index) else {
             return;
@@ -78,10 +99,11 @@ impl Screenshots {
         }
         screenshot(&format!("{} at {now}", index + 1));
         self.taken.set(index + 1);
-        if self.is_done()
-            && let Some(marker) = self.done_marker
-        {
-            let _ = spring::echo(marker, "");
+        if self.is_done() {
+            if let Some(marker) = self.done_marker {
+                let _ = spring::echo(marker, "");
+            }
+            self.quit_at.set(self.quit_after.map(|ticks| now + ticks));
         }
     }
 }
