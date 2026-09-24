@@ -1,11 +1,17 @@
 //! The `PREFIX|field|field` text messages our games pass between rules and UI.
 //!
-//! Rules send status to the UI with `send_lua_ui_msg`; the UI sends input to
-//! the rules with `send_lua_rules_msg`. Fields are either positional
+//! Rules send status to the UI with [`send_to_ui`] (`spring::send_to_unsynced`);
+//! the UI sends input to the rules with [`send_to_rules`]
+//! (`spring::send_lua_rules_msg`). Fields are either positional
 //! (`MOVE|12.5|300`) or `key=value` pairs (`STATUS|health=40|gameEnd=0`).
-//! Parsing is strict about numbers: a non-finite float never reaches synced
-//! code.
+//!
+//! [`Encoder`] escapes `\` and `|` in values (and `=` in keys) with a
+//! backslash, so a value can't split into two fields; [`Fields::text`] and
+//! [`unescape`] undo it. Parsing is strict about numbers: a non-finite float
+//! never reaches synced code, and the encoder reports one it is asked to
+//! write, since the receiver would drop that message.
 
+use alloc::borrow::Cow;
 use alloc::string::String;
 use core::cell::RefCell;
 use core::fmt::{Display, Write};
@@ -27,7 +33,7 @@ pub fn fields<'a>(message: &'a str, prefix: &str) -> Option<Fields<'a>> {
 /// A message whose first field names the command (`hold|zap|12|40`): the
 /// command and the remaining fields.
 pub fn command(message: &str) -> Option<(&str, Fields<'_>)> {
-    let (command, rest) = match message.split_once('|') {
+    let (command, rest) = match split_unescaped(message, b'|') {
         Some((command, rest)) => (command, Some(rest)),
         None => (message, None),
     };
@@ -40,13 +46,44 @@ pub fn command(message: &str) -> Option<(&str, Fields<'_>)> {
 }
 
 /// The `key=value` fields of `message` after `prefix|`. Fields without `=`
-/// are skipped.
+/// are skipped. Keys and values come as sent (escaped); numbers need no
+/// unescaping, text does ([`unescape`]).
 pub fn key_values<'a>(
     message: &'a str,
     prefix: &str,
 ) -> Option<impl Iterator<Item = (&'a str, &'a str)>> {
     let fields = fields(message, prefix)?;
-    Some(fields.filter_map(|field| field.split_once('=')))
+    Some(fields.filter_map(|field| split_unescaped(field, b'=')))
+}
+
+/// A field as it was before [`Encoder`] escaped it.
+pub fn unescape(field: &str) -> Cow<'_, str> {
+    if !field.contains('\\') {
+        return Cow::Borrowed(field);
+    }
+    let mut out = String::with_capacity(field.len());
+    let mut chars = field.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => out.extend(chars.next()),
+            c => out.push(c),
+        }
+    }
+    Cow::Owned(out)
+}
+
+/// Split at the first `separator` that isn't escaped.
+fn split_unescaped(text: &str, separator: u8) -> Option<(&str, &str)> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            byte if byte == separator => return Some((&text[..i], &text[i + 1..])),
+            _ => i += 1,
+        }
+    }
+    None
 }
 
 /// Positional message fields; each accessor consumes one. Clone it to look
@@ -57,11 +94,12 @@ pub struct Fields<'a> {
 }
 
 impl<'a> Iterator for Fields<'a> {
+    /// The field as sent (escaped); see [`Fields::text`].
     type Item = &'a str;
 
     fn next(&mut self) -> Option<&'a str> {
         let rest = self.rest?;
-        match rest.split_once('|') {
+        match split_unescaped(rest, b'|') {
             Some((field, tail)) => {
                 self.rest = Some(tail);
                 Some(field)
@@ -87,10 +125,18 @@ impl<'a> Fields<'a> {
         self.next()?.parse().ok()
     }
 
-    /// `1`/`0` (any other non-empty value counts as `true`).
+    /// `1` or `0` (as [`Encoder::flag`] writes), or `true` / `false`.
     pub fn flag(&mut self) -> Option<bool> {
-        let field = self.next()?;
-        (!field.is_empty()).then(|| field != "0")
+        match self.next()? {
+            "1" | "true" => Some(true),
+            "0" | "false" => Some(false),
+            _ => None,
+        }
+    }
+
+    /// A text field, unescaped.
+    pub fn text(&mut self) -> Option<Cow<'a, str>> {
+        self.next().map(unescape)
     }
 
     /// Two finite floats, typically a map position `x|z`.
@@ -103,8 +149,8 @@ impl<'a> Fields<'a> {
         Some((self.f32()?, self.f32()?, self.f32()?))
     }
 
-    /// Everything not consumed yet, `|` included, as one field: for a free
-    /// text last field such as a story line.
+    /// Everything not consumed yet, `|` included, as one field: the free
+    /// text [`Encoder::rest`] wrote last, such as a story line.
     pub fn rest(&mut self) -> Option<&'a str> {
         self.rest.take()
     }
@@ -116,22 +162,46 @@ impl<'a> Fields<'a> {
 }
 
 /// Builds a message: `Encoder::new("STATUS").kv("health", 40).finish()`.
-pub struct Encoder(String);
+pub struct Encoder {
+    message: String,
+    /// What is wrong with the message, if anything: the receiver would drop
+    /// it.
+    problem: Option<Problem>,
+    /// [`rest`](Self::rest) was written; nothing may follow it.
+    closed: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Problem {
+    /// Field `n` (from 1) is `NaN` or infinite, which the parser rejects.
+    NonFinite(usize),
+    /// A field was added after [`Encoder::rest`], so it became part of the
+    /// free text.
+    AfterRest,
+}
 
 impl Encoder {
     pub fn new(prefix: &str) -> Self {
-        Self(String::from(prefix))
+        Self {
+            message: String::from(prefix),
+            problem: None,
+            closed: false,
+        }
     }
 
     /// Append a positional field.
     pub fn field(mut self, value: impl Display) -> Self {
-        let _ = write!(self.0, "|{value}");
+        self.separator();
+        self.value(value, false);
         self
     }
 
     /// Append a `key=value` field.
     pub fn kv(mut self, key: &str, value: impl Display) -> Self {
-        let _ = write!(self.0, "|{key}={value}");
+        self.separator();
+        self.value(key, true);
+        self.message.push('=');
+        self.value(value, false);
         self
     }
 
@@ -150,15 +220,111 @@ impl Encoder {
         self.kv(key, u8::from(value))
     }
 
-    pub fn finish(self) -> String {
-        self.0
+    /// Append free text as it is, `|` and all, as the last field. The
+    /// receiver reads it with [`Fields::rest`].
+    pub fn rest(mut self, text: &str) -> Self {
+        self.separator();
+        self.message.push_str(text);
+        self.closed = true;
+        self
     }
+
+    /// What would make the receiver drop this message, if anything.
+    pub fn problem(&self) -> Option<Problem> {
+        self.problem
+    }
+
+    /// The message. A [`problem`](Self::problem) is logged (once per
+    /// message prefix), since the receiver will drop the message.
+    pub fn finish(self) -> String {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(problem) = self.problem {
+            report(&self.message, problem);
+        }
+        self.message
+    }
+
+    fn separator(&mut self) {
+        if self.closed && self.problem.is_none() {
+            self.problem = Some(Problem::AfterRest);
+        }
+        self.message.push('|');
+    }
+
+    fn value(&mut self, value: impl Display, key: bool) {
+        let start = self.message.len();
+        let _ = write!(self.message, "{value}");
+        let written = &self.message[start..];
+        if matches!(written, "NaN" | "inf" | "-inf") && self.problem.is_none() {
+            let index = self.message[..start].matches('|').count();
+            self.problem = Some(Problem::NonFinite(index));
+        }
+        let special = |c: char| c == '\\' || c == '|' || (key && c == '=');
+        if written.contains(special) {
+            let escaped: String = written
+                .chars()
+                .flat_map(|c| {
+                    let escape = special(c).then_some('\\');
+                    escape.into_iter().chain(core::iter::once(c))
+                })
+                .collect();
+            self.message.truncate(start);
+            self.message.push_str(&escaped);
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn report(message: &str, problem: Problem) {
+    static REPORTED: crate::local::Local<crate::local::Seen> =
+        crate::local::Local::new(crate::local::Seen::new());
+    let prefix = message.split('|').next().unwrap_or(message);
+    if REPORTED.first(prefix) {
+        spring::log_warning!(
+            "springcabal",
+            "message `{message}` will be dropped by its receiver: {problem:?}"
+        );
+    }
+}
+
+/// Send `message` from the UI to the rules (`SendLuaRulesMsg`). Returns
+/// whether the engine took it; a failure is logged once per message prefix.
+#[cfg(target_arch = "wasm32")]
+pub fn send_to_rules(message: &str) -> bool {
+    sent(message, "rules", spring::send_lua_rules_msg(message))
+}
+
+/// Send `message` from the synced rules to their unsynced side and the UI
+/// (`SendToUnsynced`). Returns whether the engine took it; a failure is
+/// logged once per message prefix.
+#[cfg(target_arch = "wasm32")]
+pub fn send_to_ui(message: &str) -> bool {
+    sent(message, "UI", spring::send_to_unsynced(message))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn sent(message: &str, to: &str, result: spring::Result<bool>) -> bool {
+    static FAILED: crate::local::Local<crate::local::Seen> =
+        crate::local::Local::new(crate::local::Seen::new());
+    let prefix = message.split('|').next().unwrap_or(message);
+    if matches!(result, Ok(true)) {
+        // Log the next failure of this message again.
+        FAILED.forget(prefix);
+        return true;
+    }
+    if FAILED.first(prefix) {
+        spring::log_warning!(
+            "springcabal",
+            "`{message}` not sent to the {to}: {result:?}"
+        );
+    }
+    false
 }
 
 /// Remembers the last value sent so a message goes out only when it changes.
 ///
 /// ```ignore
-/// self.status.send_if_changed(status, |s| spring::send_lua_ui_msg(&s.encode(), ""));
+/// self.status.send_if_changed(status, |s| send_to_ui(&s.encode()));
 /// ```
 pub struct SendOnChange<T> {
     last: RefCell<Option<T>>,
@@ -302,6 +468,64 @@ mod tests {
             .field(1.5)
             .finish();
         assert_eq!(msg, "S|hp=40|1|1.5");
+    }
+
+    #[test]
+    fn flags_are_strict() {
+        let mut f = fields("F|1|0|true|false|2|", "F").unwrap();
+        let flags: alloc::vec::Vec<_> = core::iter::from_fn(|| Some(f.flag())).take(6).collect();
+        assert_eq!(
+            flags,
+            [Some(true), Some(false), Some(true), Some(false), None, None]
+        );
+    }
+
+    #[test]
+    fn separators_in_values_round_trip() {
+        let encoder = Encoder::new("S")
+            .field("a|b")
+            .field(r"back\slash")
+            .kv("k=ey", "v=a|l")
+            .field(2);
+        assert_eq!(encoder.problem(), None);
+        let msg = encoder.finish();
+        assert_eq!(msg, r"S|a\|b|back\\slash|k\=ey=v=a\|l|2");
+        let mut f = fields(&msg, "S").unwrap();
+        assert_eq!(f.text().as_deref(), Some("a|b"));
+        assert_eq!(f.text().as_deref(), Some(r"back\slash"));
+        let (key, value) = split_unescaped(f.next().unwrap(), b'=').unwrap();
+        assert_eq!((&*unescape(key), &*unescape(value)), ("k=ey", "v=a|l"));
+        assert_eq!(f.i32(), Some(2));
+        assert!(f.is_done());
+        let pairs: alloc::vec::Vec<_> = key_values(r"S|a\=b=c", "S").unwrap().collect();
+        assert_eq!(pairs, [(r"a\=b", "c")]);
+    }
+
+    #[test]
+    fn non_finite_is_reported() {
+        let ok = Encoder::new("P")
+            .field(1.5)
+            .field(format_args!("{:.1}", 2.0));
+        assert_eq!(ok.problem(), None);
+        let nan = Encoder::new("P")
+            .field(1.0)
+            .field(f32::NAN)
+            .field(f32::INFINITY);
+        assert_eq!(nan.problem(), Some(Problem::NonFinite(2)));
+        let msg = Encoder::new("P").kv("x", -f32::INFINITY).finish();
+        assert!(fields(&msg, "P").unwrap().f32().is_none());
+    }
+
+    #[test]
+    fn rest_is_verbatim_and_last() {
+        let encoder = Encoder::new("S").field(1).rest("free|text");
+        assert_eq!(encoder.problem(), None);
+        let msg = encoder.finish();
+        let mut f = fields(&msg, "S").unwrap();
+        assert_eq!(f.i32(), Some(1));
+        assert_eq!(f.rest(), Some("free|text"));
+        let late = Encoder::new("S").rest("text").field(1);
+        assert_eq!(late.problem(), Some(Problem::AfterRest));
     }
 
     #[test]

@@ -9,6 +9,7 @@
 extern crate alloc;
 
 pub mod keys;
+pub mod local;
 pub mod message;
 
 // These call into the engine, whose functions exist only on wasm32. The
