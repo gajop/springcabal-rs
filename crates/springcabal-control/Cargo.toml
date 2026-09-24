@@ -1,0 +1,15 @@
+[package]
+name = "springcabal-control"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Player movement and a follow camera for SpringCabal's Rust/WASM games"
+
+[dependencies]
+spring = { workspace = true }
+spring-addons = { workspace = true }
+springcabal = { workspace = true }
+libm = { workspace = true }
+
+[lints]
+workspace = true
