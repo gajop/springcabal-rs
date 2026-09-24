@@ -24,6 +24,21 @@ pub fn fields<'a>(message: &'a str, prefix: &str) -> Option<Fields<'a>> {
     })
 }
 
+/// A message whose first field names the command (`hold|zap|12|40`): the
+/// command and the remaining fields.
+pub fn command(message: &str) -> Option<(&str, Fields<'_>)> {
+    let (command, rest) = match message.split_once('|') {
+        Some((command, rest)) => (command, Some(rest)),
+        None => (message, None),
+    };
+    (!command.is_empty()).then_some((
+        command,
+        Fields {
+            rest: rest.filter(|rest| !rest.is_empty()),
+        },
+    ))
+}
+
 /// The `key=value` fields of `message` after `prefix|`. Fields without `=`
 /// are skipped.
 pub fn key_values<'a>(
@@ -34,7 +49,9 @@ pub fn key_values<'a>(
     Some(fields.filter_map(|field| field.split_once('=')))
 }
 
-/// Positional message fields; each accessor consumes one.
+/// Positional message fields; each accessor consumes one. Clone it to look
+/// ahead without consuming.
+#[derive(Clone)]
 pub struct Fields<'a> {
     rest: Option<&'a str>,
 }
@@ -167,12 +184,22 @@ impl<T> SendOnChange<T> {
     }
 }
 
-impl<T: PartialEq + Clone> SendOnChange<T> {
-    /// Call `send` with `value` unless it equals the last value sent
-    /// successfully. `send` reports success; a failed send is retried on the
-    /// next call. Returns whether a message went out.
-    pub fn send_if_changed(&self, value: T, send: impl FnOnce(&T) -> bool) -> bool {
-        if self.last.borrow().as_ref() == Some(&value) {
+impl<T: Clone> SendOnChange<T> {
+    /// Like [`send_if_changed`](Self::send_if_changed), with a custom test:
+    /// `changed(last, new)` decides whether `value` is worth sending, e.g.
+    /// only when a target moved more than a few elmos.
+    pub fn send_if(
+        &self,
+        value: T,
+        changed: impl FnOnce(&T, &T) -> bool,
+        send: impl FnOnce(&T) -> bool,
+    ) -> bool {
+        if self
+            .last
+            .borrow()
+            .as_ref()
+            .is_some_and(|last| !changed(last, &value))
+        {
             return false;
         }
         // No borrow is held while `send` calls into the engine.
@@ -181,6 +208,15 @@ impl<T: PartialEq + Clone> SendOnChange<T> {
         }
         self.last.replace(Some(value));
         true
+    }
+}
+
+impl<T: PartialEq + Clone> SendOnChange<T> {
+    /// Call `send` with `value` unless it equals the last value sent
+    /// successfully. `send` reports success; a failed send is retried on the
+    /// next call. Returns whether a message went out.
+    pub fn send_if_changed(&self, value: T, send: impl FnOnce(&T) -> bool) -> bool {
+        self.send_if(value, |last, new| last != new, send)
     }
 }
 
@@ -225,6 +261,29 @@ mod tests {
         assert_eq!(f.rest(), Some("free|text"));
         assert!(f.is_done());
         assert_eq!(Encoder::new("L").fields([1, 2]).finish(), "L|1|2");
+    }
+
+    #[test]
+    fn command_splits_first_field() {
+        let (name, mut rest) = command("hold|zap|1.5").unwrap();
+        assert_eq!(name, "hold");
+        let mut ahead = rest.clone();
+        assert_eq!(ahead.next(), Some("zap"));
+        assert_eq!(rest.next(), Some("zap"));
+        assert_eq!(rest.f32(), Some(1.5));
+        let (name, rest) = command("release").unwrap();
+        assert_eq!(name, "release");
+        assert!(rest.is_done());
+        assert!(command("").is_none());
+    }
+
+    #[test]
+    fn send_if_uses_custom_test() {
+        let aim = SendOnChange::new();
+        let moved = |a: &f32, b: &f32| (a - b).abs() > 8.0;
+        assert!(aim.send_if(0.0, moved, |_| true));
+        assert!(!aim.send_if(5.0, moved, |_| true));
+        assert!(aim.send_if(9.0, moved, |_| true));
     }
 
     #[test]

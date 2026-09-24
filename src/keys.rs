@@ -44,6 +44,12 @@ impl MoveKeys {
         self.axis() != before
     }
 
+    /// Whether `key` is one of the movement keys (held or not), so a caller
+    /// can claim it even when [`set`](Self::set) reports no change.
+    pub fn is_move_key(key: &KeyEvent<'_>) -> bool {
+        direction_bit(key).is_some()
+    }
+
     /// `(x, z)`, each -1, 0 or 1. Opposite keys cancel out.
     pub fn axis(&self) -> (i32, i32) {
         let held = self.held.get();
