@@ -20,4 +20,6 @@ pub mod menu;
 #[cfg(target_arch = "wasm32")]
 pub mod music;
 #[cfg(target_arch = "wasm32")]
+pub mod restart;
+#[cfg(target_arch = "wasm32")]
 pub mod shots;

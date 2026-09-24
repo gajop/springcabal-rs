@@ -1,4 +1,4 @@
-//! Leaving the game.
+//! Leaving the game. To restart a round instead, see the `restart` module.
 
 use spring_addons::KeyEvent;
 

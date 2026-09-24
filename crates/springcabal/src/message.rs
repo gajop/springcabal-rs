@@ -177,6 +177,14 @@ impl<T> SendOnChange<T> {
         }
     }
 
+    /// Start as if `value` had been sent: the receiver's initial state, which
+    /// needs no message.
+    pub const fn assuming_sent(value: T) -> Self {
+        Self {
+            last: RefCell::new(Some(value)),
+        }
+    }
+
     /// Forget the last value, so the next call sends again (after a restart
     /// or when the receiver was reloaded).
     pub fn reset(&self) {
@@ -305,5 +313,8 @@ mod tests {
         assert!(latest.send_if_changed(2, |_| true));
         latest.reset();
         assert!(latest.send_if_changed(2, |_| true));
+        let idle = SendOnChange::assuming_sent(0);
+        assert!(!idle.send_if_changed(0, |_| true));
+        assert!(idle.send_if_changed(1, |_| true));
     }
 }
