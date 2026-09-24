@@ -17,8 +17,6 @@ pub struct Mouse {
 
 #[cfg(target_arch = "wasm32")]
 mod engine {
-    use spring::Float3;
-
     use super::Mouse;
 
     /// The mouse, or `None` while it is off the window.
@@ -31,13 +29,6 @@ mod engine {
             middle: mouse.middle,
             right: mouse.right,
         })
-    }
-
-    /// The ground under the mouse, through any unit or feature on it. `None`
-    /// off the window or off the map.
-    pub fn ground_under_mouse() -> Option<Float3> {
-        let mouse = mouse()?;
-        spring::pick::ground_at(mouse.x, mouse.y)
     }
 }
 

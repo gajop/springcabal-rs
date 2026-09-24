@@ -6,10 +6,9 @@
 //!
 //! UI side:
 //! - [`keyboard`]: WASD / arrows to a direction, sent to the rules on change
-//!   ([`KeyMovement`](keyboard::KeyMovement), or the ready-made
-//!   `KeyMoveWidget`).
-//! - [`pointer`]: the mouse (`mouse`, `ground_under_mouse`). What a screen
-//!   position points at is the engine's `spring::pick`.
+//!   ([`KeyMovement`](keyboard::KeyMovement)).
+//! - [`pointer`]: the mouse (`mouse`). What a screen position points at is
+//!   the engine's `spring::pick`.
 //! - [`hold`]: hold a button to keep moving towards the cursor.
 //! - [`camera`]: [`View`](camera::View), `CameraPlacement`, and the
 //!   `CameraFollow` camera (smoothing, lead, first-frame snap).
@@ -20,7 +19,6 @@
 //! - [`goal`]: a held direction as a [`MoveGoal`](goal::MoveGoal) ahead of
 //!   the unit, and [`Steering`](goal::Steering) (the direction, and when to
 //!   stop).
-//! - [`velocity`]: or as a MoveCtrl velocity.
 //!
 //! Engine calls compile only for wasm32; the logic around them is
 //! unit-tested on the host.
@@ -34,4 +32,3 @@ pub mod hold;
 pub mod keyboard;
 pub mod pointer;
 pub mod protocol;
-pub mod velocity;

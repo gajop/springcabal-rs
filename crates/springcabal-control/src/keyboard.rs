@@ -73,69 +73,10 @@ impl KeyMovement {
 }
 
 /// Send `movement|x|z` ([`protocol`](crate::protocol)) to the rules.
-/// Returns whether the engine took it.
+/// Returns whether the engine took it (a failure is logged).
 #[cfg(target_arch = "wasm32")]
 pub fn send_direction(direction: (i32, i32)) -> bool {
-    let message = crate::protocol::encode_direction(direction);
-    match spring::send_lua_rules_msg(&message) {
-        Ok(_) => true,
-        Err(error) => {
-            spring::log_warning!("springcabal", "`{message}` not sent: {error:?}");
-            false
-        }
-    }
-}
-
-/// A widget that sends the WASD / arrow direction to the rules as
-/// `movement|x|z`, for games with nothing else to do with those keys.
-#[cfg(target_arch = "wasm32")]
-#[derive(Default)]
-pub struct KeyMoveWidget {
-    movement: KeyMovement,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl KeyMoveWidget {
-    pub const fn new() -> Self {
-        Self {
-            movement: KeyMovement::new(),
-        }
-    }
-
-    fn key(&self, event: &KeyEvent<'_>, down: bool) -> spring_addons::EventResult {
-        let claimed = self.movement.key(event, down);
-        if claimed {
-            self.movement.send(send_direction);
-        }
-        claimed.into()
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl<G> spring_addons::Widget<G> for KeyMoveWidget {
-    fn name(&self) -> &'static str {
-        "KeyMove"
-    }
-
-    fn update(&self, _ctx: &spring_addons::AddonContext<'_, G>, _dt: f32) {
-        self.movement.send(send_direction);
-    }
-
-    fn key_press(
-        &self,
-        _ctx: &spring_addons::AddonContext<'_, G>,
-        event: &KeyEvent<'_>,
-    ) -> spring_addons::EventResult {
-        self.key(event, true)
-    }
-
-    fn key_release(
-        &self,
-        _ctx: &spring_addons::AddonContext<'_, G>,
-        event: &KeyEvent<'_>,
-    ) -> spring_addons::EventResult {
-        self.key(event, false)
-    }
+    springcabal::message::send_to_rules(&crate::protocol::encode_direction(direction))
 }
 
 #[cfg(test)]
