@@ -1,0 +1,17 @@
+[package]
+name = "springcabal"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Shared building blocks for SpringCabal's Rust/WASM Ludum Dare games"
+
+[dependencies]
+spring = { git = "https://github.com/gajop/spring-rust", branch = "rust-wip", features = ["alloc"] }
+spring-addons = { git = "https://github.com/gajop/spring-rust", branch = "rust-wip" }
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+too_many_arguments = "allow"
