@@ -1,16 +1,9 @@
-//! Keyboard helpers shared by the games' input widgets.
+//! Keyboard helpers shared by the games' input widgets. Key codes and names
+//! are the engine's: `spring_addons::keys` and `KeyEvent::matches`.
 
 use core::cell::Cell;
 
 use spring_addons::KeyEvent;
-
-/// SDL key codes the games bind that `KeyEvent::matches` doesn't cover.
-pub mod code {
-    pub const UP: i32 = 273;
-    pub const DOWN: i32 = 274;
-    pub const RIGHT: i32 = 275;
-    pub const LEFT: i32 = 276;
-}
 
 /// Held WASD / arrow keys as a movement direction.
 ///
@@ -67,22 +60,25 @@ impl MoveKeys {
 }
 
 fn direction_bit(key: &KeyEvent<'_>) -> Option<u8> {
-    match key.key_code {
-        code::LEFT => return Some(LEFT),
-        code::RIGHT => return Some(RIGHT),
-        code::UP => return Some(UP),
-        code::DOWN => return Some(DOWN),
-        _ => {}
-    }
-    [("a", LEFT), ("d", RIGHT), ("w", UP), ("s", DOWN)]
-        .into_iter()
-        .find(|(symbol, _)| key.matches(symbol))
-        .map(|(_, bit)| bit)
+    [
+        ("a", LEFT),
+        ("left", LEFT),
+        ("d", RIGHT),
+        ("right", RIGHT),
+        ("w", UP),
+        ("up", UP),
+        ("s", DOWN),
+        ("down", DOWN),
+    ]
+    .into_iter()
+    .find(|(symbol, _)| key.matches(symbol))
+    .map(|(_, bit)| bit)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use spring_addons::keys;
 
     fn key(code: i32) -> KeyEvent<'static> {
         KeyEvent {
@@ -100,15 +96,25 @@ mod tests {
 
     #[test]
     fn opposite_keys_cancel() {
-        let keys = MoveKeys::new();
-        assert!(keys.set(&key(i32::from(b'a')), true));
-        assert_eq!(keys.axis(), (-1, 0));
-        assert!(keys.set(&key(code::RIGHT), true));
-        assert_eq!(keys.axis(), (0, 0));
-        assert!(keys.set(&key(i32::from(b'a')), false));
-        assert_eq!(keys.axis(), (1, 0));
-        assert!(!keys.set(&key(i32::from(b'x')), true));
-        assert!(keys.set(&key(i32::from(b'W')), true));
-        assert_eq!(keys.axis(), (1, -1));
+        let held = MoveKeys::new();
+        assert!(held.set(&key(i32::from(b'a')), true));
+        assert_eq!(held.axis(), (-1, 0));
+        assert!(held.set(&key(keys::RIGHT), true));
+        assert_eq!(held.axis(), (0, 0));
+        assert!(held.set(&key(i32::from(b'a')), false));
+        assert_eq!(held.axis(), (1, 0));
+        assert!(!held.set(&key(i32::from(b'x')), true));
+        assert!(held.set(&key(i32::from(b'W')), true));
+        assert_eq!(held.axis(), (1, -1));
+    }
+
+    #[test]
+    fn arrows_are_the_engine_codes() {
+        let held = MoveKeys::new();
+        assert!(held.set(&key(keys::UP), true));
+        assert!(held.set(&key(keys::LEFT), true));
+        assert_eq!(held.axis(), (-1, -1));
+        // The SDL1 codes the engine no longer sends.
+        assert!(!MoveKeys::is_move_key(&key(273)));
     }
 }

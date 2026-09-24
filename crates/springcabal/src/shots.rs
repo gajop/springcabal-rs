@@ -8,6 +8,7 @@ use alloc::format;
 use alloc::vec::Vec;
 use core::cell::Cell;
 
+use spring::ResultExt;
 use spring_addons::{AddonContext, Widget};
 
 /// What the schedule counts in.
@@ -85,9 +86,7 @@ impl Screenshots {
         let Some(now) = self.now() else { return };
         if self.quit_at.get().is_some_and(|at| now >= at) {
             self.quit_at.set(None);
-            if let Err(error) = spring::system_control::quit(0) {
-                spring::log_warning!("springcabal", "quit after screenshots failed: {error:?}");
-            }
+            spring::system_control::quit(0).log_err("quit after screenshots");
             return;
         }
         let index = self.taken.get();
@@ -101,7 +100,7 @@ impl Screenshots {
         self.taken.set(index + 1);
         if self.is_done() {
             if let Some(marker) = self.done_marker {
-                let _ = spring::echo(marker, "");
+                spring::echo(marker, "").log_err("screenshots done marker");
             }
             self.quit_at.set(self.quit_after.map(|ticks| now + ticks));
         }
@@ -121,7 +120,7 @@ impl<G> Widget<G> for Screenshots {
 /// Take a screenshot now and log `E2E screenshot {label}` so a failing golden
 /// can be traced to the moment it was taken.
 pub fn screenshot(label: &str) {
-    let _ = spring::echo(&format!("E2E screenshot {label}"), "");
+    spring::echo(&format!("E2E screenshot {label}"), "").log_err("screenshot label");
     if let Err(error) = spring::send_command("screenshot") {
         spring::log_warning!("springcabal", "screenshot {label} failed: {error:?}");
     }

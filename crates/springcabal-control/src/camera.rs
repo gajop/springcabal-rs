@@ -350,7 +350,7 @@ pub use engine::*;
 mod engine {
     use core::cell::{Cell, RefCell};
 
-    use spring::Float3;
+    use spring::{Float3, ResultExt};
     use spring_addons::{AddonContext, EventResult, Widget};
 
     use super::{Aim, FocusY, Follow, Output, Smoother, View};
@@ -557,13 +557,13 @@ mod engine {
     /// The engine's tracker follows the selected unit, so select it, arm the
     /// tracker, and select nothing again.
     fn arm_tracker(unit: i32) {
-        let _ = spring::selection::select_unit_array(&[unit], false);
+        spring::selection::select_unit_array(&[unit], false).log_err_once("camera: select");
         for command in ["trackoff", "track", "trackmode 1"] {
             if let Err(error) = spring::send_commands(command, "") {
                 spring::log_warning!("springcabal", "camera `{command}` failed: {error:?}");
             }
         }
-        let _ = spring::selection::select_unit_array(&[], false);
+        spring::selection::select_unit_array(&[], false).log_err_once("camera: deselect");
     }
 
     /// A widget with a [`CameraFollow`] on the unit `target` names.

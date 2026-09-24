@@ -8,8 +8,8 @@
 //! - [`keyboard`]: WASD / arrows to a direction, sent to the rules on change
 //!   ([`KeyMovement`](keyboard::KeyMovement), or the ready-made
 //!   `KeyMoveWidget`).
-//! - [`pointer`]: the mouse and what it points at (`ground_at`, `unit_at`,
-//!   decoded [`Hit`](pointer::Hit)s; a miss is never a position).
+//! - [`pointer`]: the mouse (`mouse`, `ground_under_mouse`). What a screen
+//!   position points at is the engine's `spring::pick`.
 //! - [`hold`]: hold a button to keep moving towards the cursor.
 //! - [`camera`]: [`View`](camera::View), `CameraPlacement`, and the
 //!   `CameraFollow` camera (smoothing, lead, first-frame snap).
