@@ -262,7 +262,7 @@ impl Follow {
         self
     }
 
-    /// Also arm the engine's unit tracker (`track`, mode 1) on the unit,
+    /// Also arm the engine's unit tracker (`spring::track_unit`) on the unit,
     /// which keeps the camera on it between our updates.
     pub const fn engine_tracker(mut self) -> Self {
         self.engine_tracker = true;
@@ -554,16 +554,9 @@ mod engine {
         }
     }
 
-    /// The engine's tracker follows the selected unit, so select it, arm the
-    /// tracker, and select nothing again.
+    /// Arm the engine's camera tracker on `unit`, leaving the selection alone.
     fn arm_tracker(unit: i32) {
-        spring::selection::select_unit_array(&[unit], false).log_err_once("camera: select");
-        for command in ["trackoff", "track", "trackmode 1"] {
-            if let Err(error) = spring::send_commands(command, "") {
-                spring::log_warning!("springcabal", "camera `{command}` failed: {error:?}");
-            }
-        }
-        spring::selection::select_unit_array(&[], false).log_err_once("camera: deselect");
+        spring::track_unit(unit).log_err_once("camera: track_unit");
     }
 
     /// A widget with a [`CameraFollow`] on the unit `target` names.

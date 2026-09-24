@@ -67,23 +67,17 @@ impl VelocityDrive {
         let velocity = self.velocity(direction);
         let moved = spring::move_ctrl::set_velocity(unit_id, velocity)?;
         if self.face && velocity != Float3::ZERO {
-            spring::move_ctrl::set_heading(unit_id, heading(direction))?;
+            spring::move_ctrl::set_heading(unit_id, i32::from(heading(direction)))?;
         }
         Ok(moved)
     }
 }
 
 /// The engine heading (-32768..32767, 0 facing +z) of a direction on the
-/// map.
-pub fn heading((dx, dz): (f32, f32)) -> i32 {
-    const UNITS_PER_RADIAN: f32 = 32_768.0 / core::f32::consts::PI;
-    let heading = libm::roundf(libm::atan2f(dx, dz) * UNITS_PER_RADIAN) as i32;
-    // atan2 gives π for straight towards -z; the engine wraps it.
-    if heading > i32::from(i16::MAX) {
-        heading - 65_536
-    } else {
-        heading
-    }
+/// map: the engine's own `GetHeadingFromVector`, as Lua's MoveCtrl code gets
+/// it.
+pub fn heading((dx, dz): (f32, f32)) -> i16 {
+    Float3::new(dx, 0.0, dz).heading()
 }
 
 #[cfg(test)]
@@ -104,6 +98,6 @@ mod tests {
         assert_eq!(heading((0.0, 1.0)), 0);
         assert_eq!(heading((1.0, 0.0)), 16_384);
         assert_eq!(heading((-1.0, 0.0)), -16_384);
-        assert_eq!(heading((0.0, -1.0)), -32_768);
+        assert_eq!(heading((0.0, -1.0)), -32_767);
     }
 }
