@@ -15,10 +15,14 @@ pub struct MoveKeys {
     held: Cell<u8>,
 }
 
-const LEFT: u8 = 1;
-const RIGHT: u8 = 2;
-const UP: u8 = 4;
-const DOWN: u8 = 8;
+const A: u8 = 1;
+const D: u8 = 2;
+const W: u8 = 4;
+const S: u8 = 8;
+const LEFT: u8 = 16;
+const RIGHT: u8 = 32;
+const UP: u8 = 64;
+const DOWN: u8 = 128;
 
 impl MoveKeys {
     pub const fn new() -> Self {
@@ -28,7 +32,7 @@ impl MoveKeys {
     /// Record a key press (`down`) or release. Returns `true` when the key is
     /// a movement key and the direction changed.
     pub fn set(&self, key: &KeyEvent<'_>, down: bool) -> bool {
-        let Some(bit) = direction_bit(key) else {
+        let Some(bit) = key_bit(key) else {
             return false;
         };
         let before = self.axis();
@@ -40,7 +44,7 @@ impl MoveKeys {
     /// Whether `key` is one of the movement keys (held or not), so a caller
     /// can claim it even when [`set`](Self::set) reports no change.
     pub fn is_move_key(key: &KeyEvent<'_>) -> bool {
-        direction_bit(key).is_some()
+        key_bit(key).is_some()
     }
 
     /// `(x, z)`, each -1, 0 or 1. Opposite keys cancel out.
@@ -49,7 +53,7 @@ impl MoveKeys {
         let pair = |negative: u8, positive: u8| {
             i32::from(held & positive != 0) - i32::from(held & negative != 0)
         };
-        (pair(LEFT, RIGHT), pair(UP, DOWN))
+        (pair(A | LEFT, D | RIGHT), pair(W | UP, S | DOWN))
     }
 
     /// Release everything (e.g. when the window loses focus or the game
@@ -59,15 +63,15 @@ impl MoveKeys {
     }
 }
 
-fn direction_bit(key: &KeyEvent<'_>) -> Option<u8> {
+fn key_bit(key: &KeyEvent<'_>) -> Option<u8> {
     [
-        ("a", LEFT),
+        ("a", A),
         ("left", LEFT),
-        ("d", RIGHT),
+        ("d", D),
         ("right", RIGHT),
-        ("w", UP),
+        ("w", W),
         ("up", UP),
-        ("s", DOWN),
+        ("s", S),
         ("down", DOWN),
     ]
     .into_iter()
@@ -106,6 +110,24 @@ mod tests {
         assert!(!held.set(&key(i32::from(b'x')), true));
         assert!(held.set(&key(i32::from(b'W')), true));
         assert_eq!(held.axis(), (1, -1));
+    }
+
+    #[test]
+    fn releasing_one_alias_keeps_the_other_held() {
+        for (letter, arrow, direction) in [
+            (b'a', keys::LEFT, (-1, 0)),
+            (b'd', keys::RIGHT, (1, 0)),
+            (b'w', keys::UP, (0, -1)),
+            (b's', keys::DOWN, (0, 1)),
+        ] {
+            let held = MoveKeys::new();
+            assert!(held.set(&key(i32::from(letter)), true));
+            assert!(!held.set(&key(arrow), true));
+            assert!(!held.set(&key(i32::from(letter)), false));
+            assert_eq!(held.axis(), direction);
+            assert!(held.set(&key(arrow), false));
+            assert_eq!(held.axis(), (0, 0));
+        }
     }
 
     #[test]

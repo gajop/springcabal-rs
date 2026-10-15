@@ -182,7 +182,6 @@ pub struct Follow {
     output: Output,
     snap_updates: u8,
     engine_tracker: bool,
-    block_zoom: bool,
 }
 
 impl Follow {
@@ -195,7 +194,6 @@ impl Follow {
             output,
             snap_updates: 1,
             engine_tracker: false,
-            block_zoom: false,
         }
     }
 
@@ -267,12 +265,6 @@ impl Follow {
     /// which keeps the camera on it between our updates.
     pub const fn engine_tracker(mut self) -> Self {
         self.engine_tracker = true;
-        self
-    }
-
-    /// Claim the mouse wheel, so the engine doesn't zoom the camera away.
-    pub const fn block_zoom(mut self) -> Self {
-        self.block_zoom = true;
         self
     }
 }

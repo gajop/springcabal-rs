@@ -4,8 +4,7 @@
 //! The unit keeps its own movement physics (acceleration, turning, slopes,
 //! collisions); the goal only says where to head. Re-issue it every frame
 //! (or every few) while a direction is held, so the goal stays ahead of the
-//! unit. For direct control of the velocity instead, see
-//! [`velocity`](crate::velocity).
+//! unit.
 
 #[cfg(target_arch = "wasm32")]
 use spring::Float3;

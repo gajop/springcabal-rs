@@ -358,22 +358,12 @@ impl<T> SendOnChange<T> {
     }
 }
 
-impl<T: Clone> SendOnChange<T> {
-    /// Like [`send_if_changed`](Self::send_if_changed), with a custom test:
-    /// `changed(last, new)` decides whether `value` is worth sending, e.g.
-    /// only when a target moved more than a few elmos.
-    pub fn send_if(
-        &self,
-        value: T,
-        changed: impl FnOnce(&T, &T) -> bool,
-        send: impl FnOnce(&T) -> bool,
-    ) -> bool {
-        if self
-            .last
-            .borrow()
-            .as_ref()
-            .is_some_and(|last| !changed(last, &value))
-        {
+impl<T: PartialEq> SendOnChange<T> {
+    /// Call `send` with `value` unless it equals the last value sent
+    /// successfully. `send` reports success; a failed send is retried on the
+    /// next call. Returns whether a message went out.
+    pub fn send_if_changed(&self, value: T, send: impl FnOnce(&T) -> bool) -> bool {
+        if self.last.borrow().as_ref() == Some(&value) {
             return false;
         }
         // No borrow is held while `send` calls into the engine.
@@ -382,15 +372,6 @@ impl<T: Clone> SendOnChange<T> {
         }
         self.last.replace(Some(value));
         true
-    }
-}
-
-impl<T: PartialEq + Clone> SendOnChange<T> {
-    /// Call `send` with `value` unless it equals the last value sent
-    /// successfully. `send` reports success; a failed send is retried on the
-    /// next call. Returns whether a message went out.
-    pub fn send_if_changed(&self, value: T, send: impl FnOnce(&T) -> bool) -> bool {
-        self.send_if(value, |last, new| last != new, send)
     }
 }
 
@@ -449,15 +430,6 @@ mod tests {
         assert_eq!(name, "release");
         assert!(rest.is_done());
         assert!(command("").is_none());
-    }
-
-    #[test]
-    fn send_if_uses_custom_test() {
-        let aim = SendOnChange::new();
-        let moved = |a: &f32, b: &f32| (a - b).abs() > 8.0;
-        assert!(aim.send_if(0.0, moved, |_| true));
-        assert!(!aim.send_if(5.0, moved, |_| true));
-        assert!(aim.send_if(9.0, moved, |_| true));
     }
 
     #[test]
@@ -526,6 +498,19 @@ mod tests {
         assert_eq!(f.rest(), Some("free|text"));
         let late = Encoder::new("S").rest("text").field(1);
         assert_eq!(late.problem(), Some(Problem::AfterRest));
+    }
+
+    #[test]
+    fn send_can_reenter_and_reset_the_cache() {
+        #[derive(PartialEq)]
+        struct Value(i32);
+
+        let latest = SendOnChange::assuming_sent(Value(0));
+        assert!(latest.send_if_changed(Value(1), |_| {
+            latest.reset();
+            true
+        }));
+        assert!(!latest.send_if_changed(Value(1), |_| panic!("already sent")));
     }
 
     #[test]
