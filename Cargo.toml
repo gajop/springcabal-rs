@@ -8,8 +8,8 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
-spring = { git = "https://github.com/gajop/spring-rust", branch = "rust-wip", features = ["alloc"] }
-spring-addons = { git = "https://github.com/gajop/spring-rust", branch = "rust-wip" }
+spring = { git = "https://github.com/gajop/spring-rust", rev = "c77a8b7054394507716f15e580f7d05f11876e44", features = ["alloc"] }
+spring-addons = { git = "https://github.com/gajop/spring-rust", rev = "c77a8b7054394507716f15e580f7d05f11876e44" }
 springcabal = { path = "crates/springcabal" }
 # `core` has no exp/atan2 on a no_std target.
 libm = "0.2"
