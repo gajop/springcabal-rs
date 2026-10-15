@@ -12,10 +12,13 @@ extern crate alloc;
 // unit tests cover the logic around them.
 pub mod check;
 pub mod defs;
-pub mod gallery;
 pub mod keys;
 pub mod local;
 pub mod menu;
 pub mod message;
 pub mod music;
 pub mod shots;
+pub mod verification;
+
+#[cfg(target_arch = "wasm32")]
+pub mod volumes;
