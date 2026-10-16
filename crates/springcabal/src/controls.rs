@@ -29,8 +29,6 @@ impl GameControls {
             Some("pause")
         } else if event.matches("f12") {
             Some("screenshot")
-        } else if event.matches("enter") {
-            Some("chat")
         } else if event.alt && !event.ctrl && !event.meta {
             if ["=", "+", "numpad+", "insert"]
                 .iter()
@@ -147,8 +145,8 @@ mod tests {
         let controls = GameControls::new();
         assert_eq!(controls.command(&key(0x4000_0048)), Some("pause"));
         assert_eq!(controls.command(&key(0x4000_0045)), Some("screenshot"));
-        assert_eq!(controls.command(&key(13)), Some("chat"));
-        assert_eq!(controls.command(&key(0x4000_0058)), Some("chat"));
+        assert_eq!(controls.command(&key(13)), None);
+        assert_eq!(controls.command(&key(0x4000_0058)), None);
         for key_code in [i32::from(b'p'), i32::from(b's'), i32::from(b' ')] {
             assert_eq!(controls.command(&key(key_code)), None);
         }
