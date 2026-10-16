@@ -49,6 +49,11 @@ impl MoveKeys {
 
     /// `(x, z)`, each -1, 0 or 1. Opposite keys cancel out.
     pub fn axis(&self) -> (i32, i32) {
+        #[cfg(target_arch = "wasm32")]
+        if spring::messages::is_user_writing(0).unwrap_or(false) {
+            self.clear();
+            return (0, 0);
+        }
         let held = self.held.get();
         let pair = |negative: u8, positive: u8| {
             i32::from(held & positive != 0) - i32::from(held & negative != 0)
