@@ -49,13 +49,12 @@ impl GameControls {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-impl<G> spring_addons::ui::Widget<G> for GameControls {
+impl<G, E: spring::capabilities::Local> spring_addons::ui::Widget<G, E> for GameControls {
     fn name(&self) -> &'static str {
         "GameControls"
     }
 
-    fn init(&self, _ctx: &spring_addons::AddonContext<'_, G>) {
+    fn init(&self, ctx: &spring_addons::AddonContext<'_, G, E>) {
         use spring::ResultExt;
 
         if !self.keep_rts_bindings {
@@ -79,7 +78,10 @@ impl<G> spring_addons::ui::Widget<G> for GameControls {
                 "bind Any+escape edit_escape",
                 "bind Ctrl+v pastetext",
             ] {
-                spring::send_command(command).log_err_once("setting chat controls");
+                ctx.spring()
+                    .messages()
+                    .send_commands(command, "")
+                    .log_err_once(ctx.spring(), "setting chat controls");
             }
         }
         for command in [
@@ -95,19 +97,25 @@ impl<G> spring_addons::ui::Widget<G> for GameControls {
             "bind Alt+delete slowdown",
             "bind Ctrl+q reloadforce",
         ] {
-            spring::send_command(command).log_err_once("setting game controls");
+            ctx.spring()
+                .messages()
+                .send_commands(command, "")
+                .log_err_once(ctx.spring(), "setting game controls");
         }
     }
 
-    fn shutdown(&self, _ctx: &spring_addons::AddonContext<'_, G>) {
+    fn shutdown(&self, ctx: &spring_addons::AddonContext<'_, G, E>) {
         use spring::ResultExt;
 
-        spring::send_command("keyreload").log_err_once("restoring key bindings");
+        ctx.spring()
+            .messages()
+            .send_commands("keyreload", "")
+            .log_err_once(ctx.spring(), "restoring key bindings");
     }
 
     fn key_press(
         &self,
-        _ctx: &spring_addons::AddonContext<'_, G>,
+        ctx: &spring_addons::AddonContext<'_, G, E>,
         event: &KeyEvent<'_>,
     ) -> spring_addons::EventResult {
         use spring::ResultExt;
@@ -116,7 +124,10 @@ impl<G> spring_addons::ui::Widget<G> for GameControls {
             return spring_addons::EventResult::Ignored;
         };
         if !event.is_repeat || matches!(command, "speedup" | "slowdown") {
-            spring::send_command(command).log_err_once("handling a game control key");
+            ctx.spring()
+                .messages()
+                .send_commands(command, "")
+                .log_err_once(ctx.spring(), "handling a game control key");
         }
         spring_addons::EventResult::Handled
     }

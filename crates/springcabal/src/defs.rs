@@ -4,37 +4,39 @@
 //! the ids and per-def values it needs on first use and keeps them:
 //!
 //! ```ignore
-//! static DEFS: DefCache<Defs> = DefCache::new(Defs::resolve);
+//! static DEFS: DefCache<Defs> = DefCache::new();
 //!
-//! pub fn defs() -> &'static Defs {
-//!     DEFS.get()
+//! pub fn defs(spring: &Spring<'_, RulesSynced>) -> &'static Defs {
+//!     DEFS.get_or_init(|| Defs::resolve(spring))
 //! }
 //! ```
 //!
 //! Resolve lazily, not in a `static` initializer or before the engine has
-//! loaded the defs: the first `get` runs `resolve`, which must not call
-//! `get` on the same cache.
+//! loaded the defs: the first `get_or_init` runs `resolve`, which must not
+//! initialize the same cache recursively.
 
-use core::cell::OnceCell;
-
-use crate::local::Local;
+use std::sync::OnceLock;
 
 pub struct DefCache<T> {
-    value: Local<OnceCell<T>>,
-    resolve: fn() -> T,
+    value: OnceLock<T>,
 }
 
 impl<T> DefCache<T> {
-    pub const fn new(resolve: fn() -> T) -> Self {
+    pub const fn new() -> Self {
         Self {
-            value: Local::new(OnceCell::new()),
-            resolve,
+            value: OnceLock::new(),
         }
     }
 
     /// The defs, resolved on the first call.
-    pub fn get(&self) -> &T {
-        self.value.get_or_init(self.resolve)
+    pub fn get_or_init(&self, resolve: impl FnOnce() -> T) -> &T {
+        self.value.get_or_init(resolve)
+    }
+}
+
+impl<T> Default for DefCache<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -51,9 +53,9 @@ mod tests {
 
     #[test]
     fn resolves_once() {
-        let cache = DefCache::new(resolve);
-        assert_eq!(*cache.get(), 7);
-        assert_eq!(*cache.get(), 7);
+        let cache = DefCache::new();
+        assert_eq!(*cache.get_or_init(resolve), 7);
+        assert_eq!(*cache.get_or_init(resolve), 7);
         assert_eq!(CALLS.load(Ordering::Relaxed), 1);
     }
 }

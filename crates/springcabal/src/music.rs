@@ -8,9 +8,7 @@
 
 use core::cell::Cell;
 
-#[cfg(target_arch = "wasm32")]
 use spring::ResultExt;
-#[cfg(target_arch = "wasm32")]
 use spring_addons::{AddonContext, Widget};
 
 /// Restart this long before the end, so the loop has no audible gap.
@@ -21,7 +19,6 @@ const LOOP_LEAD: f32 = 0.015;
 /// ```ignore
 /// handler.add(MusicLoop::new("sounds/theme.ogg", 0.4));
 /// ```
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub struct MusicLoop {
     track: Cell<&'static str>,
     volume: Cell<f32>,
@@ -30,7 +27,6 @@ pub struct MusicLoop {
     warned: Cell<bool>,
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
     /// Start (or restart) on the next update.
@@ -70,17 +66,22 @@ impl MusicLoop {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 impl MusicLoop {
     /// Stop the music until [`restart`](Self::restart) or
     /// [`switch`](Self::switch).
-    pub fn stop(&self) {
+    pub fn stop<E: spring::capabilities::Common>(&self, spring: &spring::Spring<'_, E>) {
         self.state.set(State::Stopped);
-        spring::sound::stop_sound_stream(0).log_err("music: stop");
+        spring
+            .sound()
+            .stop_sound_stream()
+            .log_err(spring, "music: stop");
     }
 
-    fn start(&self) {
-        match spring::sound::play_sound_stream(self.track.get(), self.volume.get(), false) {
+    fn start<E: spring::capabilities::Common>(&self, spring: &spring::Spring<'_, E>) {
+        match spring
+            .sound()
+            .play_sound_stream(self.track.get(), self.volume.get(), false)
+        {
             Ok(true) => {
                 self.state.set(State::Playing { heard: false });
                 self.warned.set(false);
@@ -89,6 +90,7 @@ impl MusicLoop {
             failed => {
                 if !self.warned.replace(true) {
                     spring::log_warning!(
+                        spring,
                         "springcabal",
                         "music: could not play {}: {failed:?}",
                         self.track.get()
@@ -98,23 +100,23 @@ impl MusicLoop {
         }
     }
 
-    fn tick(&self) {
+    fn tick<E: spring::capabilities::Local>(&self, spring: &spring::Spring<'_, E>) {
         // Without sound (or before the stream reports a length) the track
         // plays once.
         let time = || {
-            spring::sound_stream_time()
-                .ok()
-                .map(|time| (time.played, time.length))
+            Some((
+                spring.sound().get_sound_stream_play_time().ok()?,
+                spring.sound().get_sound_stream_time().ok()?,
+            ))
         };
         match next(self.state.get(), time) {
             Step::Wait => {}
             Step::Heard => self.state.set(State::Playing { heard: true }),
-            Step::Start => self.start(),
+            Step::Start => self.start(spring),
         }
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 #[derive(Debug, PartialEq)]
 enum Step {
     Wait,
@@ -126,7 +128,6 @@ enum Step {
 
 /// What to do this update, given the stream's `(played, length)` in seconds
 /// (asked only while playing).
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn next(state: State, time: impl FnOnce() -> Option<(f32, f32)>) -> Step {
     let heard = match state {
         State::Stopped => return Step::Wait,
@@ -151,18 +152,17 @@ fn next(state: State, time: impl FnOnce() -> Option<(f32, f32)>) -> Step {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-impl<G> Widget<G> for MusicLoop {
+impl<G, E: spring::capabilities::Local> Widget<G, E> for MusicLoop {
     fn name(&self) -> &'static str {
         "SndMusic"
     }
 
-    fn update(&self, _ctx: &AddonContext<'_, G>, _dt: f32) {
-        self.tick();
+    fn update(&self, ctx: &AddonContext<'_, G, E>, _dt: f32) {
+        self.tick(ctx.spring());
     }
 
-    fn shutdown(&self, _ctx: &AddonContext<'_, G>) {
-        self.stop();
+    fn shutdown(&self, ctx: &AddonContext<'_, G, E>) {
+        self.stop(ctx.spring());
     }
 }
 

@@ -3,28 +3,27 @@ use alloc::vec::Vec;
 
 use spring_addons::ui::{Widget, WidgetHandler};
 
-#[cfg(target_arch = "wasm32")]
-pub fn world_only() -> bool {
-    spring::game_options::get_mod_option("gallery")
-        .ok()
-        .flatten()
-        .is_some_and(|mode| !mode.is_empty())
+pub fn world_only<E: spring::capabilities::Game>(spring: &spring::Spring<'_, E>) -> bool {
+    spring
+        .game()
+        .get_mod_option("gallery")
+        .is_ok_and(|mode| mode.exists && !mode.value.is_empty())
 }
 
-pub struct WorldWidgets<'a, G> {
-    handler: &'a mut WidgetHandler<G>,
+pub struct WorldWidgets<'a, G, E: spring::capabilities::Local = spring::Ui> {
+    handler: &'a mut WidgetHandler<G, E>,
     names: Vec<&'static str>,
 }
 
-impl<'a, G> WorldWidgets<'a, G> {
-    pub fn new(handler: &'a mut WidgetHandler<G>) -> Self {
+impl<'a, G, E: spring::capabilities::Local> WorldWidgets<'a, G, E> {
+    pub fn new(handler: &'a mut WidgetHandler<G, E>) -> Self {
         Self {
             handler,
             names: Vec::new(),
         }
     }
 
-    pub fn widget(mut self, widget: impl Widget<G> + 'static) -> Self {
+    pub fn widget(mut self, widget: impl Widget<G, E> + 'static) -> Self {
         self.names.push(widget.name());
         self.handler.add(Box::new(widget));
         self
@@ -34,9 +33,8 @@ impl<'a, G> WorldWidgets<'a, G> {
         &self.names
     }
 
-    #[cfg(target_arch = "wasm32")]
-    pub fn announce(self, section: &str) {
-        spring::log_notice!(section, "gallery mode: {}", self.names.join(" "));
+    pub fn announce(self, spring: &spring::Spring<'_, E>, section: &str) {
+        spring::log_notice!(spring, section, "gallery mode: {}", self.names.join(" "));
     }
 }
 

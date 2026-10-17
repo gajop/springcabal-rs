@@ -237,7 +237,6 @@ impl Encoder {
     /// The message. A [`problem`](Self::problem) is logged (once per
     /// message prefix), since the receiver will drop the message.
     pub fn finish(self) -> String {
-        #[cfg(target_arch = "wasm32")]
         if let Some(problem) = self.problem {
             report(&self.message, problem);
         }
@@ -274,46 +273,74 @@ impl Encoder {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 fn report(message: &str, problem: Problem) {
-    static REPORTED: crate::local::Local<crate::local::Seen> =
-        crate::local::Local::new(crate::local::Seen::new());
+    static REPORTED: std::sync::Mutex<crate::local::Seen> =
+        std::sync::Mutex::new(crate::local::Seen::new());
     let prefix = message.split('|').next().unwrap_or(message);
-    if REPORTED.first(prefix) {
-        spring::log_warning!(
-            "springcabal",
+    if REPORTED
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .first(prefix)
+    {
+        spring_addons::log::warning(&alloc::format!(
             "message `{message}` will be dropped by its receiver: {problem:?}"
-        );
+        ));
     }
 }
 
 /// Send `message` from the UI to the rules (`SendLuaRulesMsg`). Returns
 /// whether the engine took it; a failure is logged once per message prefix.
-#[cfg(target_arch = "wasm32")]
-pub fn send_to_rules(message: &str) -> bool {
-    sent(message, "rules", spring::send_lua_rules_msg(message))
+pub fn send_to_rules<E: spring::capabilities::Game>(
+    spring: &spring::Spring<'_, E>,
+    message: &str,
+) -> bool {
+    sent(
+        spring,
+        message,
+        "rules",
+        spring.messages().send_lua_rules_msg(message),
+    )
 }
 
 /// Send `message` from the synced rules to their unsynced side and the UI
 /// (`SendToUnsynced`). Returns whether the engine took it; a failure is
 /// logged once per message prefix.
-#[cfg(target_arch = "wasm32")]
-pub fn send_to_ui(message: &str) -> bool {
-    sent(message, "UI", spring::send_to_unsynced(message))
+pub fn send_to_ui<E: spring::capabilities::Synced>(
+    spring: &spring::Spring<'_, E>,
+    message: &str,
+) -> bool {
+    sent(
+        spring,
+        message,
+        "UI",
+        spring.messages().send_to_unsynced(message),
+    )
 }
 
-#[cfg(target_arch = "wasm32")]
-fn sent(message: &str, to: &str, result: spring::Result<bool>) -> bool {
-    static FAILED: crate::local::Local<crate::local::Seen> =
-        crate::local::Local::new(crate::local::Seen::new());
+fn sent<E: spring::capabilities::Common>(
+    spring: &spring::Spring<'_, E>,
+    message: &str,
+    to: &str,
+    result: spring::Result<bool>,
+) -> bool {
+    static FAILED: std::sync::Mutex<crate::local::Seen> =
+        std::sync::Mutex::new(crate::local::Seen::new());
     let prefix = message.split('|').next().unwrap_or(message);
     if matches!(result, Ok(true)) {
         // Log the next failure of this message again.
-        FAILED.forget(prefix);
+        FAILED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .forget(prefix);
         return true;
     }
-    if FAILED.first(prefix) {
+    if FAILED
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .first(prefix)
+    {
         spring::log_warning!(
+            spring,
             "springcabal",
             "`{message}` not sent to the {to}: {result:?}"
         );

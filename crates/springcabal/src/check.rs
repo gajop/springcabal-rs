@@ -41,39 +41,44 @@ impl Suite {
     }
 
     /// Record one check and log it. Returns `ok`.
-    pub fn check(&mut self, ok: bool, message: impl Display) -> bool {
+    pub fn check_logged(
+        &mut self,
+        mut log: impl FnMut(&str),
+        ok: bool,
+        message: impl Display,
+    ) -> bool {
         if ok {
             self.passed += 1;
-            echo(&format!(
+            log(&format!(
                 "{} ASSERTION PASSED ({}): {message}",
                 self.tag, self.passed
             ));
         } else {
             self.failed += 1;
-            echo(&format!("{} ASSERTION FAILED: {message}", self.tag));
+            log(&format!("{} ASSERTION FAILED: {message}", self.tag));
         }
         ok
     }
 
     /// Log the final line once. Returns whether the suite passed.
-    pub fn finish(&mut self) -> bool {
+    pub fn finish_logged(&mut self, mut log: impl FnMut(&str)) -> bool {
         let ok = self.failed == 0 && self.passed >= self.min_passed;
         if self.finished {
             return ok;
         }
         self.finished = true;
         if ok {
-            echo(&format!(
+            log(&format!(
                 "{} ALL {} PASSED ({} assertions)",
                 self.tag, self.title, self.passed
             ));
         } else if self.failed == 0 {
-            echo(&format!(
+            log(&format!(
                 "{} {} FAILED (only {} of at least {} checks ran)",
                 self.tag, self.title, self.passed, self.min_passed
             ));
         } else {
-            echo(&format!(
+            log(&format!(
                 "{} {} FAILED ({} of {})",
                 self.tag,
                 self.title,
@@ -82,6 +87,22 @@ impl Suite {
             ));
         }
         ok
+    }
+
+    pub fn check<E: spring::capabilities::Common>(
+        &mut self,
+        spring: &spring::Spring<'_, E>,
+        ok: bool,
+        message: impl Display,
+    ) -> bool {
+        self.check_logged(|line| echo(spring, line), ok, message)
+    }
+
+    pub fn finish<E: spring::capabilities::Common>(
+        &mut self,
+        spring: &spring::Spring<'_, E>,
+    ) -> bool {
+        self.finish_logged(|line| echo(spring, line))
     }
 
     pub fn is_finished(&self) -> bool {
@@ -97,20 +118,10 @@ impl Suite {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-fn echo(line: &str) {
-    // `echo` goes to the infolog at every log level, which the suites read.
-    if spring::echo(line, "").is_err() {
-        spring::log_error!("springcabal", "{line}");
+fn echo<E: spring::capabilities::Common>(spring: &spring::Spring<'_, E>, line: &str) {
+    if spring.messages().echo(line, "").is_err() {
+        spring::log_error!(spring, "springcabal", "{line}");
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn echo(line: &str) {
-    #[cfg(not(test))]
-    let _ = line;
-    #[cfg(test)]
-    tests::LINES.with(|lines| lines.borrow_mut().push(alloc::string::String::from(line)));
 }
 
 #[cfg(test)]
@@ -126,6 +137,10 @@ mod tests {
         pub(super) static LINES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     }
 
+    fn record_line(line: &str) {
+        LINES.with(|lines| lines.borrow_mut().push(String::from(line)));
+    }
+
     fn lines() -> Vec<String> {
         LINES.with(|lines| lines.take())
     }
@@ -133,11 +148,11 @@ mod tests {
     #[test]
     fn passes_with_the_expected_count() {
         let mut suite = Suite::new("[T]", "T TESTS", 2);
-        assert!(suite.check(true, "one"));
-        assert!(suite.check(true, "two"));
-        assert!(suite.finish());
+        assert!(suite.check_logged(record_line, true, "one"));
+        assert!(suite.check_logged(record_line, true, "two"));
+        assert!(suite.finish_logged(record_line));
         // The final line is logged once.
-        assert!(suite.finish());
+        assert!(suite.finish_logged(record_line));
         assert_eq!(
             lines(),
             [
@@ -151,8 +166,8 @@ mod tests {
     #[test]
     fn fails_when_checks_are_missing() {
         let mut suite = Suite::new("[T]", "T TESTS", 3);
-        suite.check(true, "one");
-        assert!(!suite.finish());
+        suite.check_logged(record_line, true, "one");
+        assert!(!suite.finish_logged(record_line));
         assert_eq!(
             lines().last().map(String::as_str),
             Some("[T] T TESTS FAILED (only 1 of at least 3 checks ran)")
@@ -162,9 +177,9 @@ mod tests {
     #[test]
     fn fails_on_a_failed_check() {
         let mut suite = Suite::new("[T]", "T TESTS", 1);
-        assert!(!suite.check(false, "bad"));
-        suite.check(true, "good");
-        assert!(!suite.finish());
+        assert!(!suite.check_logged(record_line, false, "bad"));
+        suite.check_logged(record_line, true, "good");
+        assert!(!suite.finish_logged(record_line));
         assert_eq!(
             lines(),
             [

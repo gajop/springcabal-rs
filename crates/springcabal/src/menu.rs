@@ -10,11 +10,13 @@ pub fn is_quit_to_menu(key: &KeyEvent<'_>) -> bool {
     key.ctrl && !key.alt && (key.matches("q") || key.key_code == CTRL_Q)
 }
 
-#[cfg(target_arch = "wasm32")]
 /// Leave the game and go back to the menu (the lobby that started it).
-pub fn quit_to_menu() {
+pub fn quit_to_menu<E: spring::capabilities::Game>(spring: &spring::Spring<'_, E>) {
     use spring::ResultExt;
-    spring::send_command("reloadforce").log_err("quit to menu");
+    spring
+        .messages()
+        .send_commands("reloadforce", "")
+        .log_err(spring, "quit to menu");
 }
 
 #[cfg(test)]

@@ -6,7 +6,6 @@
 //! (or every few) while a direction is held, so the goal stays ahead of the
 //! unit.
 
-#[cfg(target_arch = "wasm32")]
 use spring::Float3;
 
 /// Where a held direction sends a unit: `reach` elmos ahead of it.
@@ -169,57 +168,82 @@ impl MoveGoal {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 impl MoveGoal {
     /// The goal for a unit at `from` heading in `direction`, or `None` for
     /// no direction.
-    pub fn goal(&self, from: Float3, direction: (f32, f32)) -> Option<Float3> {
+    pub fn goal<E: spring::capabilities::Game>(
+        &self,
+        spring: &spring::Spring<'_, E>,
+        from: Float3,
+        direction: (f32, f32),
+    ) -> Option<Float3> {
         let limits = match self.bounds {
             Bounds::Unbounded => None,
             Bounds::Rect(rect, clamp) => Some((rect, clamp)),
-            Bounds::Map { clearance, clamp } => map_rect(clearance).map(|rect| (rect, clamp)),
+            Bounds::Map { clearance, clamp } => {
+                map_rect(spring, clearance).map(|rect| (rect, clamp))
+            }
         };
         let (x, z) = self.offset((from.x, from.z), direction, limits)?;
         let y = match self.height {
-            GoalHeight::Ground => spring::get_ground_height(x, z).unwrap_or(0.0),
+            GoalHeight::Ground => spring.terrain().get_ground_height(x, z).unwrap_or(0.0),
             GoalHeight::Unit => from.y,
         };
         Some(Float3 { x, y, z })
     }
 
     /// Send the unit towards `goal` with this radius and rawness.
-    pub fn set(&self, unit_id: i32, goal: Float3) -> spring::Result<bool> {
-        spring::set_unit_move_goal(unit_id, goal, self.radius, 0.0, self.raw)
+    pub fn set<E: spring::capabilities::Synced>(
+        &self,
+        spring: &spring::Spring<'_, E>,
+        unit_id: i32,
+        goal: Float3,
+    ) -> spring::Result<bool> {
+        spring
+            .unit_control()
+            .set_unit_move_goal(unit_id, goal, self.radius, 0.0, self.raw)
     }
 
     /// Head the unit in `direction` from where it stands. `Ok(false)` when
     /// there is no direction or the engine refused the goal.
-    pub fn apply(&self, unit_id: i32, direction: (f32, f32)) -> spring::Result<bool> {
-        let position = spring::get_unit_position(unit_id, false, false)?;
-        self.apply_from(unit_id, position, direction)
+    pub fn apply<E: spring::capabilities::Synced>(
+        &self,
+        spring: &spring::Spring<'_, E>,
+        unit_id: i32,
+        direction: (f32, f32),
+    ) -> spring::Result<bool> {
+        let position = spring.units_info().get_unit_position(
+            unit_id,
+            spring::units_info::GetUnitPositionOptions::default(),
+        )?;
+        self.apply_from(spring, unit_id, position, direction)
     }
 
     /// Like [`apply`](Self::apply), from a position the caller already has
     /// (the unit's mid position, say).
-    pub fn apply_from(
+    pub fn apply_from<E: spring::capabilities::Synced>(
         &self,
+        spring: &spring::Spring<'_, E>,
         unit_id: i32,
         from: Float3,
         direction: (f32, f32),
     ) -> spring::Result<bool> {
-        match self.goal(from, direction) {
-            Some(goal) => self.set(unit_id, goal),
+        match self.goal(spring, from, direction) {
+            Some(goal) => self.set(spring, unit_id, goal),
             None => Ok(false),
         }
     }
 }
 
 /// The map in elmos, `clearance` from each edge.
-#[cfg(target_arch = "wasm32")]
-fn map_rect(clearance: f32) -> Option<Rect> {
+fn map_rect<E: spring::capabilities::Game>(
+    spring: &spring::Spring<'_, E>,
+    clearance: f32,
+) -> Option<Rect> {
     use spring::consts::SQUARE_SIZE_F as SQUARE_SIZE;
     // Heightmap points: one more than the map's squares.
-    let [points_x, points_z] = spring::get_height_map_size().ok()?;
+    let spring::terrain::GetHeightMapSizeValue { points_x, points_z } =
+        spring.terrain().get_height_map_size().ok()?;
     Some(Rect {
         min_x: clearance,
         min_z: clearance,

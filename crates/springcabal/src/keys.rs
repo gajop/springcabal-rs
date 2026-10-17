@@ -29,16 +29,40 @@ impl MoveKeys {
         Self { held: Cell::new(0) }
     }
 
+    pub fn set<E: spring::capabilities::Local>(
+        &self,
+        spring: &spring::Spring<'_, E>,
+        key: &KeyEvent<'_>,
+        down: bool,
+    ) -> bool {
+        if spring.messages().is_user_writing().unwrap_or(false) {
+            self.clear();
+            return false;
+        }
+        self.set_held(key, down)
+    }
+
+    pub fn axis<E: spring::capabilities::Local>(
+        &self,
+        spring: &spring::Spring<'_, E>,
+    ) -> (i32, i32) {
+        if spring.messages().is_user_writing().unwrap_or(false) {
+            self.clear();
+            return (0, 0);
+        }
+        self.raw_axis()
+    }
+
     /// Record a key press (`down`) or release. Returns `true` when the key is
     /// a movement key and the direction changed.
-    pub fn set(&self, key: &KeyEvent<'_>, down: bool) -> bool {
+    fn set_held(&self, key: &KeyEvent<'_>, down: bool) -> bool {
         let Some(bit) = key_bit(key) else {
             return false;
         };
-        let before = self.axis();
+        let before = self.raw_axis();
         let held = self.held.get();
         self.held.set(if down { held | bit } else { held & !bit });
-        self.axis() != before
+        self.raw_axis() != before
     }
 
     /// Whether `key` is one of the movement keys (held or not), so a caller
@@ -48,12 +72,7 @@ impl MoveKeys {
     }
 
     /// `(x, z)`, each -1, 0 or 1. Opposite keys cancel out.
-    pub fn axis(&self) -> (i32, i32) {
-        #[cfg(target_arch = "wasm32")]
-        if spring::messages::is_user_writing(0).unwrap_or(false) {
-            self.clear();
-            return (0, 0);
-        }
+    fn raw_axis(&self) -> (i32, i32) {
         let held = self.held.get();
         let pair = |negative: u8, positive: u8| {
             i32::from(held & positive != 0) - i32::from(held & negative != 0)
@@ -106,15 +125,15 @@ mod tests {
     #[test]
     fn opposite_keys_cancel() {
         let held = MoveKeys::new();
-        assert!(held.set(&key(i32::from(b'a')), true));
-        assert_eq!(held.axis(), (-1, 0));
-        assert!(held.set(&key(keys::RIGHT), true));
-        assert_eq!(held.axis(), (0, 0));
-        assert!(held.set(&key(i32::from(b'a')), false));
-        assert_eq!(held.axis(), (1, 0));
-        assert!(!held.set(&key(i32::from(b'x')), true));
-        assert!(held.set(&key(i32::from(b'W')), true));
-        assert_eq!(held.axis(), (1, -1));
+        assert!(held.set_held(&key(i32::from(b'a')), true));
+        assert_eq!(held.raw_axis(), (-1, 0));
+        assert!(held.set_held(&key(keys::RIGHT), true));
+        assert_eq!(held.raw_axis(), (0, 0));
+        assert!(held.set_held(&key(i32::from(b'a')), false));
+        assert_eq!(held.raw_axis(), (1, 0));
+        assert!(!held.set_held(&key(i32::from(b'x')), true));
+        assert!(held.set_held(&key(i32::from(b'W')), true));
+        assert_eq!(held.raw_axis(), (1, -1));
     }
 
     #[test]
@@ -126,21 +145,21 @@ mod tests {
             (b's', keys::DOWN, (0, 1)),
         ] {
             let held = MoveKeys::new();
-            assert!(held.set(&key(i32::from(letter)), true));
-            assert!(!held.set(&key(arrow), true));
-            assert!(!held.set(&key(i32::from(letter)), false));
-            assert_eq!(held.axis(), direction);
-            assert!(held.set(&key(arrow), false));
-            assert_eq!(held.axis(), (0, 0));
+            assert!(held.set_held(&key(i32::from(letter)), true));
+            assert!(!held.set_held(&key(arrow), true));
+            assert!(!held.set_held(&key(i32::from(letter)), false));
+            assert_eq!(held.raw_axis(), direction);
+            assert!(held.set_held(&key(arrow), false));
+            assert_eq!(held.raw_axis(), (0, 0));
         }
     }
 
     #[test]
     fn arrows_are_the_engine_codes() {
         let held = MoveKeys::new();
-        assert!(held.set(&key(keys::UP), true));
-        assert!(held.set(&key(keys::LEFT), true));
-        assert_eq!(held.axis(), (-1, -1));
+        assert!(held.set_held(&key(keys::UP), true));
+        assert!(held.set_held(&key(keys::LEFT), true));
+        assert_eq!(held.raw_axis(), (-1, -1));
         // The SDL1 codes the engine no longer sends.
         assert!(!MoveKeys::is_move_key(&key(273)));
     }

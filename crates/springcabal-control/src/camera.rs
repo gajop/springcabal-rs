@@ -171,7 +171,7 @@ pub enum FocusY {
 ///     .lead(12.0)
 ///     .smoothing(Smoothing::AverageMove { updates: 12 });
 /// let camera = CameraFollow::new(FOLLOW); // in a widget; each update:
-/// camera.update(global.player(), dt);
+/// camera.update(ctx.spring(), global.player(), dt);
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Follow {
@@ -336,10 +336,8 @@ impl Smoother {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 pub use engine::*;
 
-#[cfg(target_arch = "wasm32")]
 mod engine {
     use core::cell::{Cell, RefCell};
 
@@ -350,11 +348,11 @@ mod engine {
 
     impl View {
         /// The engine camera state for this view at `position`.
-        pub const fn state(&self, position: Float3) -> spring::CameraState<'static> {
-            spring::CameraState {
-                name: self.controller_name(),
-                position,
-                direction: self.direction,
+        pub fn state(&self, position: Float3) -> spring::camera::CameraState {
+            spring::camera::CameraState {
+                name: self.controller_name().into(),
+                pos: position,
+                dir: self.direction,
                 up: self.up(),
                 right: Float3::new(1.0, 0.0, 0.0),
                 fov: self.fov,
@@ -371,8 +369,15 @@ mod engine {
 
     /// Set the camera to `view` at `position` at once. Returns whether the
     /// engine accepted it.
-    pub fn place_camera(view: &View, position: Float3) -> bool {
-        spring::set_camera_state(view.state(position), 0.0, 1.0, 1.0).is_ok_and(|ok| ok)
+    pub fn place_camera<E: spring::capabilities::Local>(
+        spring: &spring::Spring<'_, E>,
+        view: &View,
+        position: Float3,
+    ) -> bool {
+        spring
+            .camera()
+            .set_camera_state(&view.state(position), 0.0, 1.0, 1.0)
+            .is_ok_and(|ok| ok)
     }
 
     /// A widget that places the camera once, retrying until the engine
@@ -401,18 +406,24 @@ mod engine {
         }
     }
 
-    impl<G> Widget<G> for CameraPlacement {
+    impl<G, E: spring::capabilities::Local> Widget<G, E> for CameraPlacement {
         fn name(&self) -> &'static str {
             "CameraPlacement"
         }
 
-        fn update(&self, _ctx: &AddonContext<'_, G>, _dt: f32) {
+        fn update(&self, ctx: &AddonContext<'_, G, E>, _dt: f32) {
             if !self.placed.get() {
-                self.placed.set(place_camera(&self.view, self.position));
+                self.placed
+                    .set(place_camera(ctx.spring(), &self.view, self.position));
             }
         }
 
-        fn mouse_wheel(&self, _ctx: &AddonContext<'_, G>, _up: bool, _value: f32) -> EventResult {
+        fn mouse_wheel(
+            &self,
+            _ctx: &AddonContext<'_, G, E>,
+            _up: bool,
+            _value: f32,
+        ) -> EventResult {
             self.block_zoom.into()
         }
     }
@@ -447,7 +458,12 @@ mod engine {
         }
 
         /// Follow `unit` (or nobody) for an update `dt` seconds long.
-        pub fn update(&self, unit: Option<i32>, dt: f32) {
+        pub fn update<E: spring::capabilities::Local>(
+            &self,
+            spring: &spring::Spring<'_, E>,
+            unit: Option<i32>,
+            dt: f32,
+        ) {
             let config = &self.config;
             if let Some((view, position)) = config.start {
                 // Following takes over from the start camera, so stop
@@ -457,7 +473,7 @@ mod engine {
                     let state = self.state.borrow();
                     !state.placed && state.followed.is_none()
                 };
-                if pending && place_camera(&view, position) {
+                if pending && place_camera(spring, &view, position) {
                     self.state.borrow_mut().placed = true;
                 }
             }
@@ -467,12 +483,12 @@ mod engine {
                 state.tracked = None;
                 return;
             };
-            let Some(point) = self.point(unit) else {
+            let Some(point) = self.point(spring, unit) else {
                 return;
             };
             // Retried every update until the engine takes it.
             let untracked = self.state.borrow().tracked != Some(unit);
-            if config.engine_tracker && untracked && arm_tracker(unit) {
+            if config.engine_tracker && untracked && arm_tracker(spring, unit) {
                 self.state.borrow_mut().tracked = Some(unit);
             }
 
@@ -501,9 +517,11 @@ mod engine {
                     };
                     let position = Float3::new(focus.x, y, focus.z);
                     let transition = if snap { 0.0 } else { transition };
-                    spring::set_camera_state(view.state(position), transition, 1.0, 1.0)
+                    spring
+                        .camera()
+                        .set_camera_state(&view.state(position), transition, 1.0, 1.0)
                 }
-                Output::Target { transition } => spring::camera::set_camera_target(
+                Output::Target { transition } => spring.camera().set_camera_target(
                     focus,
                     spring::camera::SetCameraTargetOptions {
                         transition_time: Some(if snap { 0.0 } else { transition }),
@@ -526,24 +544,32 @@ mod engine {
         }
 
         /// The unit's point this update, led by its velocity.
-        fn point(&self, unit: i32) -> Option<Float3> {
+        fn point<E: spring::capabilities::Local>(
+            &self,
+            spring: &spring::Spring<'_, E>,
+            unit: i32,
+        ) -> Option<Float3> {
             let position = match self.config.aim {
-                Aim::Position | Aim::MidPosition => {
-                    spring::get_unit_position(unit, self.config.aim == Aim::MidPosition, false)
-                }
-                Aim::ViewPosition | Aim::ViewMidPosition => {
-                    spring::unit_rendering::get_unit_view_position(
-                        unit,
-                        self.config.aim == Aim::ViewMidPosition,
-                    )
-                }
+                Aim::Position | Aim::MidPosition => spring.units_info().get_unit_position(
+                    unit,
+                    spring::units_info::GetUnitPositionOptions {
+                        mid_pos: self.config.aim == Aim::MidPosition,
+                        aim_pos: false,
+                    },
+                ),
+                Aim::ViewPosition | Aim::ViewMidPosition => spring
+                    .unit_rendering()
+                    .get_unit_view_position(unit, self.config.aim == Aim::ViewMidPosition),
             }
             .ok()?;
             let lead = self.config.lead;
             if lead == 0.0 {
                 return Some(position);
             }
-            let velocity = spring::get_unit_velocity(unit).unwrap_or_default();
+            let velocity = spring
+                .units_info()
+                .get_unit_velocity(unit)
+                .unwrap_or_default();
             Some(Float3::new(
                 position.x + velocity.x * lead,
                 position.y + velocity.y * lead,
@@ -554,9 +580,14 @@ mod engine {
 
     /// Arm the engine's camera tracker on `unit`, leaving the selection
     /// alone. Returns whether the engine took it.
-    fn arm_tracker(unit: i32) -> bool {
-        spring::track_unit(unit)
-            .log_err_once("camera: track_unit")
+    fn arm_tracker<E: spring::capabilities::Game>(
+        spring: &spring::Spring<'_, E>,
+        unit: i32,
+    ) -> bool {
+        spring
+            .unsynced_ctrl()
+            .track_units(&[unit], -1)
+            .log_err_once(spring, "camera: track_unit")
             .is_some_and(|ok| ok)
     }
 }

@@ -42,14 +42,22 @@ impl KeyMovement {
     /// Record a key press (`down`) or release. Returns whether `event` is a
     /// movement key, which the caller should claim even when the direction
     /// didn't change (a key repeat).
-    pub fn key(&self, event: &KeyEvent<'_>, down: bool) -> bool {
-        self.keys.set(event, down);
+    pub fn key<E: spring::capabilities::Local>(
+        &self,
+        spring: &spring::Spring<'_, E>,
+        event: &KeyEvent<'_>,
+        down: bool,
+    ) -> bool {
+        self.keys.set(spring, event, down);
         MoveKeys::is_move_key(event)
     }
 
     /// `(x, z)`, each -1, 0 or 1: x to the right, z towards the camera.
-    pub fn direction(&self) -> (i32, i32) {
-        self.keys.axis()
+    pub fn direction<E: spring::capabilities::Local>(
+        &self,
+        spring: &spring::Spring<'_, E>,
+    ) -> (i32, i32) {
+        self.keys.axis(spring)
     }
 
     /// Release every key, e.g. when the chat console takes the keyboard. The
@@ -60,9 +68,13 @@ impl KeyMovement {
 
     /// Send the direction with `send` if it differs from the last one sent.
     /// `send` reports success; a failed send is retried on the next call.
-    pub fn send(&self, send: impl FnOnce((i32, i32)) -> bool) -> bool {
+    pub fn send<E: spring::capabilities::Local>(
+        &self,
+        spring: &spring::Spring<'_, E>,
+        send: impl FnOnce((i32, i32)) -> bool,
+    ) -> bool {
         self.sent
-            .send_if_changed(self.direction(), |&direction| send(direction))
+            .send_if_changed(self.direction(spring), |&direction| send(direction))
     }
 
     /// Forget what was sent, so the next [`send`](Self::send) sends again
@@ -74,12 +86,14 @@ impl KeyMovement {
 
 /// Send `movement|x|z` ([`protocol`](crate::protocol)) to the rules.
 /// Returns whether the engine took it (a failure is logged).
-#[cfg(target_arch = "wasm32")]
-pub fn send_direction(direction: (i32, i32)) -> bool {
-    springcabal::message::send_to_rules(&crate::protocol::encode_direction(direction))
+pub fn send_direction<E: spring::capabilities::Game>(
+    spring: &spring::Spring<'_, E>,
+    direction: (i32, i32),
+) -> bool {
+    springcabal::message::send_to_rules(spring, &crate::protocol::encode_direction(direction))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 
@@ -97,24 +111,51 @@ mod tests {
         }
     }
 
+    fn with_spring(call: impl FnOnce(&spring::Spring<'_, spring::Ui>)) {
+        use spring::__sys as sys;
+        unsafe extern "C" fn writing(
+            _: *const sys::IsUserWritingQuery,
+            result: *mut sys::IsUserWritingResult,
+        ) {
+            unsafe {
+                *result = sys::IsUserWritingResult {
+                    error: core::ptr::null(),
+                    writing: false,
+                };
+            }
+        }
+        let messages = sys::MessagesApi {
+            IsUserWriting: Some(writing),
+            ..Default::default()
+        };
+        let api = sys::NativeInterface {
+            messages: &messages,
+            ..Default::default()
+        };
+        let context = unsafe { spring::ModuleContext::<spring::Ui>::from_native(&api) }.unwrap();
+        context.with_spring(|spring| call(spring)).unwrap();
+    }
+
     #[test]
     fn sends_changes_only() {
-        let movement = KeyMovement::new();
-        let mut sent = alloc::vec::Vec::new();
-        assert!(movement.key(&key(i32::from(b'w')), true));
-        assert!(movement.send(|d| {
-            sent.push(d);
-            true
-        }));
-        // A repeat is claimed but changes nothing.
-        assert!(movement.key(&key(i32::from(b'w')), true));
-        assert!(!movement.send(|_| true));
-        assert!(!movement.key(&key(i32::from(b'x')), true));
-        movement.release_all();
-        assert!(movement.send(|d| {
-            sent.push(d);
-            true
-        }));
-        assert_eq!(sent, [(0, -1), (0, 0)]);
+        with_spring(|spring| {
+            let movement = KeyMovement::new();
+            let mut sent = alloc::vec::Vec::new();
+            assert!(movement.key(spring, &key(i32::from(b'w')), true));
+            assert!(movement.send(spring, |d| {
+                sent.push(d);
+                true
+            }));
+            // A repeat is claimed but changes nothing.
+            assert!(movement.key(spring, &key(i32::from(b'w')), true));
+            assert!(!movement.send(spring, |_| true));
+            assert!(!movement.key(spring, &key(i32::from(b'x')), true));
+            movement.release_all();
+            assert!(movement.send(spring, |d| {
+                sent.push(d);
+                true
+            }));
+            assert_eq!(sent, [(0, -1), (0, 0)]);
+        });
     }
 }

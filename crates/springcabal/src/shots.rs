@@ -4,14 +4,11 @@
 //! themselves once they see the done marker (`vf_quit_when`), so the widget
 //! only takes the shots and says when it's finished.
 
-#[cfg(target_arch = "wasm32")]
 use alloc::format;
 use alloc::vec::Vec;
 use core::cell::Cell;
 
-#[cfg(target_arch = "wasm32")]
 use spring::ResultExt;
-#[cfg(target_arch = "wasm32")]
 use spring_addons::{AddonContext, Widget};
 
 /// What the schedule counts in.
@@ -29,7 +26,6 @@ pub enum Clock {
 /// ```ignore
 /// handler.add(Screenshots::new(Clock::GameFrame, &[25, 90, 210]).done_marker("MYCUBE VISUAL E2E PASSED"));
 /// ```
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub struct Screenshots {
     clock: Clock,
     at: Vec<u32>,
@@ -77,12 +73,14 @@ impl Screenshots {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 impl Screenshots {
-    fn now(&self) -> Option<u32> {
+    fn now<E: spring::capabilities::Game>(&self, spring: &spring::Spring<'_, E>) -> Option<u32> {
         match self.clock {
             // Before the game starts the engine reports frame -1 (`u32::MAX`).
-            Clock::GameFrame => spring::game::frame()
+            Clock::GameFrame => spring
+                .game()
+                .get_game_frame()
+                .map(|frame| (frame.high16 << 16) | (frame.low16 & 0xffff))
                 .ok()
                 .filter(|frame| i32::try_from(*frame).is_ok()),
             Clock::Update => {
@@ -93,17 +91,23 @@ impl Screenshots {
         }
     }
 
-    fn tick(&self) {
-        let Some(now) = self.now() else { return };
+    fn tick<E: spring::capabilities::Local>(&self, spring: &spring::Spring<'_, E>) {
+        let Some(now) = self.now(spring) else { return };
         match self.step(now) {
             Action::Wait => {}
             Action::Quit => {
-                spring::system_control::quit(0).log_err("quit after screenshots");
+                spring
+                    .system_control()
+                    .quit()
+                    .log_err(spring, "quit after screenshots");
             }
             Action::Shoot { index, last } => {
-                screenshot(&format!("{} at {now}", index + 1));
+                screenshot(spring, &format!("{} at {now}", index + 1));
                 if last && let Some(marker) = self.done_marker {
-                    spring::echo(marker, "").log_err("screenshots done marker");
+                    spring
+                        .messages()
+                        .echo(marker, "")
+                        .log_err(spring, "screenshots done marker");
                 }
             }
         }
@@ -112,7 +116,6 @@ impl Screenshots {
 
 impl Screenshots {
     /// Advance the schedule to `now` and say what to do.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     fn step(&self, now: u32) -> Action {
         if self.quit_at.get().is_some_and(|at| now >= at) {
             self.quit_at.set(None);
@@ -134,7 +137,6 @@ impl Screenshots {
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 #[derive(Debug, PartialEq)]
 enum Action {
     Wait,
@@ -146,24 +148,29 @@ enum Action {
     Quit,
 }
 
-#[cfg(target_arch = "wasm32")]
-impl<G> Widget<G> for Screenshots {
+impl<G, E: spring::capabilities::Local> Widget<G, E> for Screenshots {
     fn name(&self) -> &'static str {
         "DbgScreenshots"
     }
 
-    fn update(&self, _ctx: &AddonContext<'_, G>, _dt: f32) {
-        self.tick();
+    fn update(&self, ctx: &AddonContext<'_, G, E>, _dt: f32) {
+        self.tick(ctx.spring());
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 /// Take a screenshot now and log `E2E screenshot {label}` so a failing golden
 /// can be traced to the moment it was taken.
-pub fn screenshot(label: &str) {
-    spring::echo(&format!("E2E screenshot {label}"), "").log_err("screenshot label");
-    if let Err(error) = spring::send_command("screenshot") {
-        spring::log_warning!("springcabal", "screenshot {label} failed: {error:?}");
+pub fn screenshot<E: spring::capabilities::Game>(spring: &spring::Spring<'_, E>, label: &str) {
+    spring
+        .messages()
+        .echo(&format!("E2E screenshot {label}"), "")
+        .log_err(spring, "screenshot label");
+    if let Err(error) = spring.messages().send_commands("screenshot", "") {
+        spring::log_warning!(
+            spring,
+            "springcabal",
+            "screenshot {label} failed: {error:?}"
+        );
     }
 }
 

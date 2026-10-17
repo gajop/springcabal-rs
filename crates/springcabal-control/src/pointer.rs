@@ -15,13 +15,12 @@ pub struct Mouse {
     pub right: bool,
 }
 
-#[cfg(target_arch = "wasm32")]
 mod engine {
     use super::Mouse;
 
     /// The mouse, or `None` while it is off the window.
-    pub fn mouse() -> Option<Mouse> {
-        let mouse = spring::input::get_mouse_state(0).ok()?;
+    pub fn mouse<E: spring::capabilities::Local>(spring: &spring::Spring<'_, E>) -> Option<Mouse> {
+        let mouse = spring.input().get_mouse_state().ok()?;
         (!mouse.offscreen && mouse.x.is_finite() && mouse.y.is_finite()).then_some(Mouse {
             x: mouse.x,
             y: mouse.y,
@@ -32,5 +31,4 @@ mod engine {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 pub use engine::*;

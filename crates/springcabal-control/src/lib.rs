@@ -20,8 +20,7 @@
 //!   the unit, and [`Steering`](goal::Steering) (the direction, and when to
 //!   stop).
 //!
-//! Engine calls compile only for wasm32; the logic around them is
-//! unit-tested on the host.
+//! Engine helpers receive a scoped Spring reference on native and Wasm.
 #![no_std]
 
 extern crate alloc;
