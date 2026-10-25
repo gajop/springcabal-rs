@@ -12,6 +12,7 @@ extern crate std;
 pub mod check;
 pub mod controls;
 pub mod defs;
+pub mod jobs;
 pub mod keys;
 pub mod local;
 pub mod menu;
