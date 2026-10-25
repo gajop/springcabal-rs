@@ -80,8 +80,15 @@ impl MusicLoop {
     fn start<E: spring::capabilities::Common>(&self, spring: &spring::Spring<'_, E>) {
         match spring
             .sound()
-            .play_sound_stream(self.track.get(), self.volume.get(), false)
-        {
+            // Replacing a live stream directly can clear the engine channel's
+            // current-stream pointer while the replacement is starting. Stop
+            // first so its ownership and timing are registered for every loop.
+            .stop_sound_stream()
+            .and_then(|_| {
+                spring
+                    .sound()
+                    .play_sound_stream(self.track.get(), self.volume.get(), false)
+            }) {
             Ok(true) => {
                 self.state.set(State::Playing { heard: false });
                 self.warned.set(false);
