@@ -6,6 +6,7 @@ unsafe extern "C" {
     fn cabal_math_powf(x: f32, y: f32) -> f32;
     fn cabal_math_sinf(x: f32) -> f32;
     fn cabal_math_cosf(x: f32) -> f32;
+    fn cabal_math_acosf(x: f32) -> f32;
 }
 
 /// Raise `x` to `y` using the engine's 32-bit math.
@@ -23,6 +24,12 @@ pub fn sinf(x: f32) -> f32 {
 #[inline]
 pub fn cosf(x: f32) -> f32 {
     unsafe { cabal_math_cosf(x) }
+}
+
+/// Arc cosine using the engine's 32-bit argument reduction and polynomial.
+#[inline]
+pub fn acosf(x: f32) -> f32 {
+    unsafe { cabal_math_acosf(x) }
 }
 
 #[cfg(test)]
@@ -48,6 +55,15 @@ mod tests {
         // Rabbit 3403 at frame 20: a one-bit result difference changes speed.
         let fear = f32::from_bits(0x424a2e3b);
         assert_eq!(powf(fear / 45.0, 0.8).to_bits(), 0x3f8c7850);
+    }
+
+    #[test]
+    fn arc_cosine_preserves_endpoints_and_domain() {
+        assert_eq!(acosf(1.0), 0.0);
+        assert_eq!(acosf(0.0), core::f32::consts::FRAC_PI_2);
+        assert_eq!(acosf(-1.0), core::f32::consts::PI);
+        assert!(acosf(1.01).is_nan());
+        assert!(acosf(f32::NAN).is_nan());
     }
 
     #[test]

@@ -30,6 +30,7 @@ fn main() {
     });
     let files = [
         "e_powf",
+        "e_acosf",
         "k_sinf",
         "k_cosf",
         "s_sinf",

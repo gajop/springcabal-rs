@@ -13,6 +13,7 @@ inline float __ieee754_sqrtf(float x) {return __builtin_sqrtf(x);}
 inline float __floorf(float x) {return __builtin_floorf(x);}
 float __scalbnf(float,int);
 extern "C" float cabal_math_powf(float,float);
+extern "C" float cabal_math_acosf(float);
 float __kernel_sinf(float,float,int);
 float __kernel_cosf(float,float);
 extern "C" float cabal_math_sinf(float);
