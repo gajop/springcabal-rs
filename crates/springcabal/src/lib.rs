@@ -18,6 +18,7 @@ pub mod local;
 pub mod menu;
 pub mod message;
 pub mod music;
+pub mod particles;
 pub mod shots;
 pub mod verification;
 
