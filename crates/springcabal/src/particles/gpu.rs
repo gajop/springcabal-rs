@@ -83,6 +83,9 @@ struct Packet {
     count: usize,
     death: f32,
     effect: u64,
+    birth: f32,
+    last_age: f32,
+    masked: bool,
 }
 
 #[derive(Default)]
@@ -144,9 +147,37 @@ impl Stream {
         while self
             .packets
             .front()
-            .is_some_and(|p| p.death < field.elapsed)
+            .is_some_and(|p| p.death <= field.elapsed)
         {
             self.packets.pop_front();
+        }
+        // LUPS removes an effect at its deadline. An interior allocation can
+        // remain in a draw range behind a longer-lived effect. Usually all its
+        // particles are already clipped; exact endpoints with nonzero alpha
+        // need the same one-time palette mask as Lua's explicit removal.
+        for packet in &mut self.packets {
+            if !packet.masked
+                && packet.death <= field.elapsed
+                && field.elapsed - packet.birth <= packet.last_age
+            {
+                data.clear();
+                let particles = field.gpu_particles(texture);
+                let first = particles.partition_point(|p| p.effect < packet.effect);
+                for p in particles
+                    .range(first..)
+                    .take_while(|p| p.effect == packet.effect)
+                {
+                    pack(data, p);
+                    let palette = data.len() - STRIDE + 19;
+                    data[palette] = -1.0;
+                }
+                if !data.is_empty() {
+                    spring
+                        .gfx()
+                        .upload_vbo(self.vbo, data, -1, packet.start as i32, 1, 0)?;
+                }
+                packet.masked = true;
+            }
         }
         data.clear();
         let mut packets = Vec::new();
@@ -155,7 +186,7 @@ impl Stream {
         for p in particles
             .iter()
             .skip(first)
-            .filter(|p| p.death >= field.elapsed)
+            .filter(|p| p.death > field.elapsed)
         {
             append(data, &mut packets, p);
         }
@@ -192,7 +223,7 @@ impl Stream {
             for p in field
                 .gpu_particles(texture)
                 .iter()
-                .filter(|p| p.death >= field.elapsed)
+                .filter(|p| p.death > field.elapsed)
             {
                 append(data, &mut packets, p);
             }
@@ -219,7 +250,7 @@ impl Stream {
     fn draw(&self, spring: &spring::Spring<'_, spring::Ui>, elapsed: f32) -> spring::Result<()> {
         let mut start = None;
         let mut finish = 0;
-        for packet in self.packets.iter().filter(|p| p.death >= elapsed) {
+        for packet in self.packets.iter().filter(|p| p.death > elapsed) {
             if let Some(at) = start
                 && packet.start < finish
             {
@@ -458,12 +489,16 @@ fn append(data: &mut Vec<f32>, packets: &mut Vec<Packet>, p: &Particle) {
         && packet.effect == p.effect
     {
         packet.count += 1;
+        packet.last_age = packet.last_age.max(p.delay + p.life);
     } else {
         packets.push(Packet {
             start,
             count: 1,
             death: p.death,
             effect: p.effect,
+            birth: p.birth,
+            last_age: p.delay + p.life,
+            masked: false,
         });
     }
 }

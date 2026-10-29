@@ -205,11 +205,11 @@ impl Field {
         for (group, lifetimes) in self.particles.iter_mut().zip(&mut self.lifetimes) {
             // Match LUPS effect lifetimes. The GPU clips individual particles;
             // CPU updates touch one emission record, rather than each particle.
-            while lifetimes.front().is_some_and(|p| p.death < self.elapsed) {
+            while lifetimes.front().is_some_and(|p| p.death <= self.elapsed) {
                 let span = lifetimes.pop_front().unwrap();
                 group.drain(..span.count);
             }
-            for span in lifetimes.iter().filter(|p| p.death >= self.elapsed) {
+            for span in lifetimes.iter().filter(|p| p.death > self.elapsed) {
                 first[span.texture] = first[span.texture].min(span.serial);
             }
         }
@@ -222,7 +222,8 @@ impl Field {
     fn timed_particles(&self, texture: Option<Texture>) -> impl Iterator<Item = TimedParticle<'_>> {
         self.gpu_particles(texture).iter().filter_map(|p| {
             let age = self.elapsed - p.birth;
-            (age > p.delay && age <= p.delay + p.life).then_some(TimedParticle { particle: p, age })
+            (p.death > self.elapsed && age > p.delay && age <= p.delay + p.life)
+                .then_some(TimedParticle { particle: p, age })
         })
     }
     pub fn visible(&self, texture: Texture) -> impl Iterator<Item = Sample> {
@@ -376,11 +377,11 @@ mod tests {
             field.advance(step);
             reference.retain_mut(|p| {
                 p.age += step;
-                p.age <= p.delay + p.life
+                p.age <= p.delay + p.life && field.elapsed < p.death
             });
             for kind in 0..4 {
                 let count = 1 + frame % 5;
-                let effects: Vec<_> = (0..count)
+                let mut effects: Vec<_> = (0..count)
                     .map(|_| {
                         serial += 1;
                         particle(serial, kind)
@@ -389,6 +390,9 @@ mod tests {
                 // Vary deadlines so expired emissions can sit behind a longer
                 // lived one in the allocation queue, as in the LUPS ring.
                 let deadline = 26.0 + (frame % 4) as f32 * 10.0;
+                for p in &mut effects {
+                    p.death = field.elapsed + deadline;
+                }
                 reference.extend_from_slice(&effects);
                 field.emit(effects.into_iter(), deadline);
             }
