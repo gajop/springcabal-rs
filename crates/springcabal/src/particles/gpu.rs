@@ -190,60 +190,63 @@ impl Stream {
         {
             append(data, &mut packets, p);
         }
-        self.last_serial = field.serial;
-        let mut count = data.len() / STRIDE;
-        if count == 0 {
-            return Ok(());
-        }
-        let mut start = self.head;
-        let tail = self.packets.front().map(|p| p.start);
-        let room = match tail {
-            None => {
-                self.head = 0;
-                start = 0;
-                count <= self.capacity
-            }
-            Some(tail) if start > tail => {
-                if start + count <= self.capacity {
-                    true
-                } else if count <= tail {
-                    start = 0;
-                    true
-                } else {
-                    false
-                }
-            }
-            Some(tail) => start < tail && start + count <= tail,
-        };
-        if !room {
-            // Growth is infrequent. Repack the live field once; regular draws
-            // upload only newly emitted particles into the circular stream.
-            data.clear();
-            packets.clear();
-            for p in field
-                .gpu_particles(texture)
-                .iter()
-                .filter(|p| p.death > field.elapsed)
-            {
-                append(data, &mut packets, p);
-            }
-            count = data.len() / STRIDE;
-            self.configure(
-                spring,
-                quad,
-                self.capacity.max(count).max(256).next_power_of_two(),
-            )?;
-            self.last_serial = field.serial;
-            start = 0;
-        }
-        spring
-            .gfx()
-            .upload_vbo(self.vbo, data, -1, start as i32, 1, 0)?;
+        // Reserve each effect separately, as LUPS does. Reserving the entire
+        // frame's burst as one allocation can reject space that fits all of
+        // its effects across the ring boundary and repeatedly copy live data.
+        // Adjacent allocations still share one typed upload without copying
+        // their packed float data into another aggregate vector.
+        let mut pending: Option<(usize, usize, usize)> = None;
         for mut packet in packets {
-            packet.start += start;
-            self.packets.push_back(packet);
+            let source = packet.start;
+            if let Some(start) = allocation_start(
+                self.capacity,
+                self.head,
+                self.packets.front().map(|p| p.start),
+                packet.count,
+            ) {
+                if let Some((from, count, destination)) = pending {
+                    if from + count == source && destination + count == start {
+                        pending = Some((from, count + packet.count, destination));
+                    } else {
+                        upload(spring, self.vbo, data, from, count, destination)?;
+                        pending = Some((source, packet.count, start));
+                    }
+                } else {
+                    pending = Some((source, packet.count, start));
+                }
+                packet.start = start;
+                self.head = start + packet.count;
+                self.packets.push_back(packet);
+            } else {
+                if let Some((from, count, destination)) = pending.take() {
+                    upload(spring, self.vbo, data, from, count, destination)?;
+                }
+                // Match Lua's growth decision at this effect, without
+                // reserving later births ahead of their allocation order.
+                let mut packed = Vec::new();
+                let mut live = Vec::new();
+                for p in particles
+                    .iter()
+                    .take_while(|p| p.effect <= packet.effect)
+                    .filter(|p| p.death > field.elapsed)
+                {
+                    append(&mut packed, &mut live, p);
+                }
+                let count = packed.len() / STRIDE;
+                self.configure(
+                    spring,
+                    quad,
+                    self.capacity.max(count).max(256).next_power_of_two(),
+                )?;
+                upload(spring, self.vbo, &packed, 0, count, 0)?;
+                self.head = count;
+                self.packets.extend(live);
+            }
         }
-        self.head = start + count;
+        if let Some((from, count, destination)) = pending {
+            upload(spring, self.vbo, data, from, count, destination)?;
+        }
+        self.last_serial = field.serial;
         Ok(())
     }
 
@@ -482,6 +485,47 @@ impl Gpu {
     }
 }
 
+// Keep effect allocations contiguous; the following effect may wrap to zero.
+fn allocation_start(
+    capacity: usize,
+    head: usize,
+    tail: Option<usize>,
+    count: usize,
+) -> Option<usize> {
+    match tail {
+        None => (count <= capacity).then_some(0),
+        Some(tail) if head > tail => {
+            if head + count <= capacity {
+                Some(head)
+            } else {
+                (count <= tail).then_some(0)
+            }
+        }
+        Some(tail) => (head < tail && head + count <= tail).then_some(head),
+    }
+}
+
+fn upload(
+    spring: &spring::Spring<'_, spring::Ui>,
+    vbo: u32,
+    data: &[f32],
+    first: usize,
+    count: usize,
+    destination: usize,
+) -> spring::Result<()> {
+    spring
+        .gfx()
+        .upload_vbo(
+            vbo,
+            &data[first * STRIDE..(first + count) * STRIDE],
+            -1,
+            destination as i32,
+            1,
+            0,
+        )
+        .map(|_| ())
+}
+
 fn append(data: &mut Vec<f32>, packets: &mut Vec<Packet>, p: &Particle) {
     let start = data.len() / STRIDE;
     pack(data, p);
@@ -534,4 +578,20 @@ fn pack(data: &mut Vec<f32>, p: &Particle) {
         1., // LUPS force exponent
         1., // LUPS distortion animation speed
     ]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::allocation_start;
+
+    #[test]
+    fn effects_can_fill_both_sides_of_a_ring_wrap_without_reallocation() {
+        // Ten free slots straddle the boundary. A frame-sized allocation
+        // fails, although its two five-particle effects both fit.
+        assert_eq!(allocation_start(256, 250, Some(5), 10), None);
+        assert_eq!(allocation_start(256, 250, Some(5), 5), Some(250));
+        assert_eq!(allocation_start(256, 255, Some(5), 5), Some(0));
+        // Those two effects consumed the free span; do not overwrite its tail.
+        assert_eq!(allocation_start(256, 5, Some(5), 1), None);
+    }
 }
